@@ -5,6 +5,10 @@ export interface HotpotSlotVO {
   shopId: number
   capacity: number
   occupied: number
+  /** 当天时刻 HH:mm:ss。旧时段没有时刻时为空。 */
+  startTime?: string | null
+  /** 当天时刻 HH:mm:ss。旧时段没有时刻时为空。 */
+  endTime?: string | null
 }
 
 export interface HotpotHoldVO {
@@ -36,6 +40,8 @@ export interface HotpotSessionResultVO {
   sessionId: number
   shopId: number
   slotId: number
+  holdId?: number | null
+  ownerUid?: number | null
   version?: number
   payableFen?: number | null
   status: string
@@ -52,6 +58,13 @@ export interface HotpotSeatReq {
 }
 
 export interface HotpotOpenReq {
+  slotId: number
+  signCode: string
+  requestKey: string
+}
+
+export interface HotpotReservationSeatReq {
+  holdId: number
   slotId: number
   signCode: string
   requestKey: string
@@ -75,4 +88,8 @@ export const seatHold = async (data: HotpotSeatReq) => {
 
 export const openWalkIn = async (data: HotpotOpenReq) => {
   return await request.post<HotpotSessionResultVO>({ url: '/store/hotpot/session/open', data })
+}
+
+export const seatReservation = async (data: HotpotReservationSeatReq) => {
+  return await request.post<HotpotSessionResultVO>({ url: '/store/hotpot/reservation/seat', data })
 }
