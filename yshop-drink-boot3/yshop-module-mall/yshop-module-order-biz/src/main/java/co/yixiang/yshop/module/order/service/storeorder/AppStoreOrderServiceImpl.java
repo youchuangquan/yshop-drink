@@ -8,9 +8,13 @@ import co.yixiang.yshop.framework.common.constant.ShopConstants;
 import co.yixiang.yshop.framework.common.enums.OrderInfoEnum;
 import co.yixiang.yshop.framework.common.enums.ShopCommonEnum;
 import co.yixiang.yshop.framework.common.exception.ErrorCode;
+import co.yixiang.yshop.framework.common.exception.ServiceException;
+import co.yixiang.yshop.framework.common.order.MalatangQuote;
 import co.yixiang.yshop.framework.common.order.OrderRequestGate;
 import co.yixiang.yshop.framework.common.order.PayChannels;
 import co.yixiang.yshop.framework.common.order.PaymentReconciliation;
+import co.yixiang.yshop.framework.common.order.QueueTickets;
+import co.yixiang.yshop.framework.common.order.ShopOptionCatalog;
 import co.yixiang.yshop.framework.common.shop.ShopAccess;
 import co.yixiang.yshop.framework.tenant.core.aop.TenantIgnore;
 import co.yixiang.yshop.module.coupon.dal.dataobject.couponuser.CouponUserDO;
@@ -27,17 +31,22 @@ import co.yixiang.yshop.module.member.service.usershopintegral.ShopUserIntegralS
 import co.yixiang.yshop.module.message.enums.WechatTempateEnum;
 import co.yixiang.yshop.module.message.mq.producer.WeixinNoticeProducer;
 import co.yixiang.yshop.module.message.redismq.msg.OrderMsg;
+import co.yixiang.yshop.module.order.controller.app.order.param.AppAddonPickParam;
 import co.yixiang.yshop.module.order.controller.app.order.param.AppOrderParam;
 import co.yixiang.yshop.module.order.controller.app.order.param.AppPayParam;
+import co.yixiang.yshop.module.order.controller.app.order.vo.AppMalatangQuoteVo;
+import co.yixiang.yshop.module.order.controller.app.order.vo.AppOrderOptionVo;
 import co.yixiang.yshop.module.order.controller.app.order.vo.AppStoreOrderQueryVo;
 import co.yixiang.yshop.module.order.convert.storeorder.StoreOrderConvert;
 import co.yixiang.yshop.module.order.dal.dataobject.ordernumber.OrderNumberDO;
 import co.yixiang.yshop.module.order.dal.dataobject.storeorder.StoreOrderDO;
 import co.yixiang.yshop.module.order.dal.dataobject.storeordercartinfo.StoreOrderCartInfoDO;
+import co.yixiang.yshop.module.order.dal.dataobject.storeorderoption.StoreOrderOptionDO;
 import co.yixiang.yshop.module.order.dal.dataobject.paynotice.PayNoticeDO;
 import co.yixiang.yshop.module.order.dal.mysql.ordernumber.OrderNumberMapper;
 import co.yixiang.yshop.module.order.dal.mysql.paynotice.PayNoticeMapper;
 import co.yixiang.yshop.module.order.dal.mysql.storeorder.StoreOrderMapper;
+import co.yixiang.yshop.module.order.dal.mysql.storeorderoption.StoreOrderOptionMapper;
 import co.yixiang.yshop.module.order.enums.AppFromEnum;
 import co.yixiang.yshop.module.order.enums.OrderLogEnum;
 import co.yixiang.yshop.module.order.enums.OrderStatusEnum;
@@ -49,8 +58,10 @@ import co.yixiang.yshop.module.product.dal.dataobject.storeproduct.StoreProductD
 import co.yixiang.yshop.module.product.dal.dataobject.storeproductattrvalue.StoreProductAttrValueDO;
 import co.yixiang.yshop.module.product.service.storeproduct.AppStoreProductService;
 import co.yixiang.yshop.module.product.service.storeproductattrvalue.StoreProductAttrValueService;
+import co.yixiang.yshop.module.store.controller.admin.storeshop.vo.ShopOptionItemVO;
 import co.yixiang.yshop.module.store.convert.storeshop.StoreShopConvert;
 import co.yixiang.yshop.module.store.dal.dataobject.storeshop.StoreShopDO;
+import co.yixiang.yshop.module.store.service.shopoption.ShopOptionService;
 import co.yixiang.yshop.module.store.service.storeshop.AppStoreShopService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
@@ -78,6 +89,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.FORBIDDEN;
+import static co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.LOCKED;
 import static co.yixiang.yshop.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static co.yixiang.yshop.module.member.enums.ErrorCodeConstants.COUPON_NOT_CONDITION;
 import static co.yixiang.yshop.module.member.enums.ErrorCodeConstants.USER_ADDRESS_NOT_EXISTS;
@@ -118,6 +130,10 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
     private AppStoreShopService appStoreShopService;
     @Resource
     private OrderNumberMapper orderNumberMapper;
+    @Resource
+    private StoreOrderOptionMapper storeOrderOptionMapper;
+    @Resource
+    private ShopOptionService shopOptionService;
     @Resource
     private AppCouponUserService appCouponUserService;
     @Resource
@@ -182,6 +198,40 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
                 key -> new TransactionTemplate(transactionManager).execute(status -> doCreateOrder(uid, param, key)));
     }
 
+    @Override
+    public AppMalatangQuoteVo quote(Long uid, AppOrderParam param) {
+        long shopId = ShopAccess.requirePositiveShopId(param.getShopId());
+        StoreShopDO storeShopDO = appStoreShopService.getById(shopId);
+        if (storeShopDO == null) {
+            throw exception(co.yixiang.yshop.module.store.enums.ErrorCodeConstants.SHOP_NOT_EXISTS);
+        }
+        PricedGoods priced = priceGoods(uid, shopId, param);
+        BigDecimal couponPrice = lookupCoupon(uid, shopId, param, priced.amount);
+        MalatangQuote.Quote quote = quoteFor(shopId, storeShopDO, param, priced.amount, couponPrice);
+        AppMalatangQuoteVo vo = new AppMalatangQuoteVo();
+        vo.setGoodsAmount(quote.goodsAmount);
+        vo.setFlavorOptionId(quote.flavorOptionId);
+        vo.setFlavorName(quote.flavorName);
+        vo.setFlavorAmount(quote.flavorAmount);
+        vo.setAddonAmount(quote.addonAmount);
+        vo.setPackingAmount(quote.packingAmount);
+        vo.setDeliveryAmount(quote.deliveryAmount);
+        vo.setCouponAmount(couponPrice);
+        vo.setPayAmount(quote.payAmount);
+        List<AppOrderOptionVo> addons = new ArrayList<>();
+        for (MalatangQuote.AddonLine line : quote.addonLines) {
+            AppOrderOptionVo row = new AppOrderOptionVo();
+            row.setKind(ShopOptionCatalog.ADDON);
+            row.setName(line.name);
+            row.setUnitPrice(line.unitPrice);
+            row.setNumber(line.number);
+            row.setAmount(line.amount);
+            addons.add(row);
+        }
+        vo.setAddons(addons);
+        return vo;
+    }
+
     /**
      * 旧报文不带 requestKey 时仍会创建订单。那一次不是防重。
      */
@@ -190,13 +240,9 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
                 && StrUtil.isBlank(param.getDeskNumber())){
             throw exception(STORE_ORDER_DESK_NOT);
         }
-        //转换参数
         List<String> productIds = param.getProductId();
         List<String> numbers = param.getNumber();
         List<String> specs = param.getSpec();
-
-
-        Integer totalNum = 0;
         List<String> cartIds = new ArrayList<>();
 
         long shopId = ShopAccess.requirePositiveShopId(param.getShopId());
@@ -205,73 +251,15 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
             throw exception(co.yixiang.yshop.module.store.enums.ErrorCodeConstants.SHOP_NOT_EXISTS);
         }
 
-        BigDecimal sumPrice = BigDecimal.ZERO;
-        BigDecimal couponPrice = BigDecimal.ZERO;
-        BigDecimal postagePrice = storeShopDO.getDeliveryPrice();
+        PricedGoods priced = priceGoods(uid, shopId, param);
+        BigDecimal sumPrice = priced.amount;
+        int totalNum = priced.totalNum;
         BigDecimal deductionPrice = BigDecimal.ZERO;
-
-        //对库存检查加锁
-        RLock lock = redissonClient.getLock(LOCK_KEY);
-        if (lock.tryLock()){
-            try {
-                for (int i = 0;i < productIds.size();i++){
-                    String newSku = StrUtil.replace(specs.get(i),"|",",");
-                    appStoreProductService.checkProductStock(uid, Long.valueOf(productIds.get(i)),
-                            Integer.valueOf(numbers.get(i)), newSku, shopId);
-                    totalNum += Integer.valueOf(numbers.get(i));
-
-                    StoreProductAttrValueDO storeProductAttrValue = storeProductAttrValueService
-                            .getOne(Wrappers.<StoreProductAttrValueDO>lambdaQuery()
-                                    .eq(StoreProductAttrValueDO::getSku, newSku)
-                                    .eq(StoreProductAttrValueDO::getProductId, productIds.get(i)));
-
-                    sumPrice = NumberUtil.add(sumPrice, NumberUtil.mul(numbers.get(i),
-                            storeProductAttrValue.getPrice().toString()));
-                }
-
-            }catch (Exception ex) {
-                log.error("[checkProductStock][执行异常]", ex);
-                throw exception(new ErrorCode(999999,ex.getMessage()));
-            } finally {
-                lock.unlock();
-            }
-        }
-
-        //计算优惠券价格
-        if(StrUtil.isNotBlank(param.getCouponId())){
-            CouponUserDO couponUserDO = appCouponUserService.getById(param.getCouponId());
-            if(couponUserDO == null){
-                throw exception(COUPON_NOT_CONDITION);
-            }
-            if (!Integer.valueOf(uid.intValue()).equals(couponUserDO.getUserId())) {
-                throw exception(FORBIDDEN);
-            }
-            ShopAccess.assertCouponBelongs(couponUserDO.getShopId(), shopId);
-            if (ShopCommonEnum.IS_STATUS_1.getValue().equals(couponUserDO.getStatus())) {
-                throw exception(FORBIDDEN);
-            }
-            if(couponUserDO.getLeast().compareTo(sumPrice) > 0) {
-                throw exception(COUPON_NOT_CONDITION);
-            }
-            couponPrice = couponUserDO.getValue();
-            int used = appCouponUserService.getBaseMapper().update(null, Wrappers.<CouponUserDO>lambdaUpdate()
-                    .set(CouponUserDO::getStatus, ShopCommonEnum.IS_STATUS_1.getValue())
-                    .eq(CouponUserDO::getId, couponUserDO.getId())
-                    .eq(CouponUserDO::getUserId, uid.intValue())
-                    .eq(CouponUserDO::getShopId, ShopAccess.shopKey(shopId))
-                    .eq(CouponUserDO::getStatus, ShopCommonEnum.IS_STATUS_0.getValue()));
-            if (used == 0) {
-                throw exception(FORBIDDEN);
-            }
-        }
-
-
-        BigDecimal payPrice = BigDecimal.ZERO;
-        //计算最终支付价格
-        if(OrderLogEnum.ORDER_TAKE_OUT.getValue().equals(param.getOrderType())){
-            payPrice = NumberUtil.sub(NumberUtil.add(sumPrice,postagePrice),couponPrice,deductionPrice);
-        }else{
-            payPrice = NumberUtil.sub(sumPrice,couponPrice,deductionPrice);
+        BigDecimal couponPrice = consumeCoupon(uid, shopId, param, sumPrice);
+        MalatangQuote.Quote quote = quoteFor(shopId, storeShopDO, param, sumPrice, couponPrice);
+        BigDecimal payPrice = quote.payAmount;
+        if (payPrice == null || payPrice.signum() < 0) {
+            throw exception(new ErrorCode(400, "报价金额不正确"));
         }
 
 
@@ -289,14 +277,9 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
             //生成分布式唯一值
             orderSn = IdUtil.getSnowflake(0, 0).nextIdStr();
 
-            //添加取餐表
-            OrderNumberDO orderNumberDO = OrderNumberDO.builder().orderId(orderSn).build();
-            orderNumberMapper.insert(orderNumberDO);
-
-            //组合数据
+            // 取餐号等付款入账后再发，这里不占号。
             LocalDateTime localDateTime = LocalDateTime.now();
             storeOrder.setGetTime(localDateTime.plusMinutes(param.getGettime()));
-            storeOrder.setNumberId(orderNumberDO.getId());
             storeOrder.setShopId(storeShopDO.getId());
             storeOrder.setShopName(storeShopDO.getName());
             storeOrder.setUid(uid);
@@ -317,12 +300,18 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
             storeOrder.setCartId(StrUtil.join(",", cartIds));
             storeOrder.setTotalNum(totalNum);
             storeOrder.setTotalPrice(sumPrice);
-            storeOrder.setTotalPostage(storeShopDO.getDeliveryPrice());
+            BigDecimal postage = quote.deliveryAmount == null ? BigDecimal.ZERO : quote.deliveryAmount;
+            storeOrder.setTotalPostage(postage);
 
-            storeOrder.setCouponId(StrUtil.isBlank(param.getCouponId()) ? 0 : Integer.valueOf(param.getCouponId()));
-            storeOrder.setCouponPrice(couponPrice);
+            storeOrder.setCouponId(hasCoupon(param.getCouponId()) ? Integer.valueOf(param.getCouponId()) : 0);
+            storeOrder.setCouponPrice(couponPrice == null ? BigDecimal.ZERO : couponPrice);
             storeOrder.setPayPrice(payPrice);
-            storeOrder.setPayPostage(storeShopDO.getDeliveryPrice());
+            storeOrder.setPayPostage(postage);
+            storeOrder.setPackingPrice(quote.packingAmount);
+            storeOrder.setFlavorOptionId(quote.flavorOptionId);
+            storeOrder.setFlavorName(quote.flavorName);
+            storeOrder.setFlavorPrice(quote.flavorAmount);
+            storeOrder.setAddonPrice(quote.addonAmount);
             storeOrder.setDeductionPrice(deductionPrice);
             storeOrder.setPaid(OrderInfoEnum.PAY_STATUS_0.getValue());
             storeOrder.setPayType(param.getPayType());
@@ -343,6 +332,7 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
             if (!res) {
                 throw exception(ORDER_GEN_FAIL);
             }
+            persistOptions(shopId, orderSn, quote);
         }
 
 
@@ -378,6 +368,224 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
         Map<String,Object> map = new HashMap<>();
         map.put("orderId",orderSn);
         return map;
+    }
+
+    private PricedGoods priceGoods(Long uid, long shopId, AppOrderParam param) {
+        List<String> productIds = param.getProductId();
+        List<String> numbers = param.getNumber();
+        List<String> specs = param.getSpec();
+        if (productIds == null || numbers == null || specs == null || productIds.isEmpty()
+                || productIds.size() != numbers.size() || productIds.size() != specs.size()) {
+            throw exception(PARAM_ERROR);
+        }
+        PricedGoods priced = new PricedGoods();
+        RLock lock = redissonClient.getLock(LOCK_KEY);
+        if (!lock.tryLock()) {
+            throw exception(LOCKED);
+        }
+        try {
+            for (int i = 0; i < productIds.size(); i++) {
+                String newSku = StrUtil.replace(specs.get(i), "|", ",");
+                int count = Integer.parseInt(numbers.get(i));
+                appStoreProductService.checkProductStock(uid, Long.valueOf(productIds.get(i)),
+                        count, newSku, shopId);
+                StoreProductAttrValueDO storeProductAttrValue = storeProductAttrValueService
+                        .getOne(Wrappers.<StoreProductAttrValueDO>lambdaQuery()
+                                .eq(StoreProductAttrValueDO::getSku, newSku)
+                                .eq(StoreProductAttrValueDO::getProductId, productIds.get(i)));
+                if (storeProductAttrValue == null || storeProductAttrValue.getPrice() == null) {
+                    throw exception(new ErrorCode(400, "商品没有服务端价格"));
+                }
+                priced.totalNum += count;
+                priced.amount = priced.amount.add(storeProductAttrValue.getPrice().multiply(BigDecimal.valueOf(count)));
+            }
+            return priced;
+        } catch (ServiceException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            log.error("[checkProductStock][执行异常]", ex);
+            throw exception(new ErrorCode(999999, ex.getMessage()));
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private BigDecimal consumeCoupon(Long uid, long shopId, AppOrderParam param, BigDecimal goods) {
+        BigDecimal couponPrice = lookupCoupon(uid, shopId, param, goods);
+        if (couponPrice == null) {
+            return null;
+        }
+        CouponUserDO couponUserDO = appCouponUserService.getById(param.getCouponId());
+        if (couponUserDO == null) {
+            throw exception(COUPON_NOT_CONDITION);
+        }
+        int used = appCouponUserService.getBaseMapper().update(null, Wrappers.<CouponUserDO>lambdaUpdate()
+                .set(CouponUserDO::getStatus, ShopCommonEnum.IS_STATUS_1.getValue())
+                .eq(CouponUserDO::getId, couponUserDO.getId())
+                .eq(CouponUserDO::getUserId, uid.intValue())
+                .eq(CouponUserDO::getShopId, ShopAccess.shopKey(shopId))
+                .eq(CouponUserDO::getStatus, ShopCommonEnum.IS_STATUS_0.getValue()));
+        if (used == 0) {
+            throw exception(FORBIDDEN);
+        }
+        return couponPrice;
+    }
+
+    /**
+     * 没有选择优惠券时返回 null。couponId 为 0 是旧结账页的空值，不是一张券。
+     */
+    private BigDecimal lookupCoupon(Long uid, long shopId, AppOrderParam param, BigDecimal goods) {
+        if (!hasCoupon(param.getCouponId())) {
+            return null;
+        }
+        CouponUserDO couponUserDO = appCouponUserService.getById(param.getCouponId());
+        if (couponUserDO == null || couponUserDO.getValue() == null) {
+            throw exception(COUPON_NOT_CONDITION);
+        }
+        if (!Integer.valueOf(uid.intValue()).equals(couponUserDO.getUserId())) {
+            throw exception(FORBIDDEN);
+        }
+        ShopAccess.assertCouponBelongs(couponUserDO.getShopId(), shopId);
+        if (ShopCommonEnum.IS_STATUS_1.getValue().equals(couponUserDO.getStatus())) {
+            throw exception(FORBIDDEN);
+        }
+        if (couponUserDO.getLeast().compareTo(goods) > 0) {
+            throw exception(COUPON_NOT_CONDITION);
+        }
+        return couponUserDO.getValue();
+    }
+
+    private boolean hasCoupon(String couponId) {
+        return StrUtil.isNotBlank(couponId) && !"0".equals(couponId.trim());
+    }
+
+    private MalatangQuote.Quote quoteFor(long shopId, StoreShopDO shop, AppOrderParam param,
+                                          BigDecimal goods, BigDecimal coupon) {
+        List<ShopOptionCatalog.Option> options = new ArrayList<>();
+        for (ShopOptionItemVO item : shopOptionService.listByShop(shopId)) {
+            if (item == null || item.getId() == null) {
+                continue;
+            }
+            options.add(new ShopOptionCatalog.Option(item.getId(), shopId, item.getKind(),
+                    item.getName(), item.getPrice()));
+        }
+        ShopOptionCatalog.Option flavor = null;
+        if (param.getFlavorOptionId() != null) {
+            if (param.getFlavorOptionId() <= 0) {
+                throw exception(PARAM_ERROR);
+            }
+            flavor = ShopOptionCatalog.require(shopId, param.getFlavorOptionId(), ShopOptionCatalog.FLAVOR, options);
+        }
+        List<MalatangQuote.AddonPick> addons = new ArrayList<>();
+        if (param.getAddons() != null) {
+            for (AppAddonPickParam pick : param.getAddons()) {
+                if (pick == null || pick.getOptionId() == null || pick.getOptionId() <= 0) {
+                    throw exception(PARAM_ERROR);
+                }
+                addons.add(new MalatangQuote.AddonPick(
+                        ShopOptionCatalog.require(shopId, pick.getOptionId(), ShopOptionCatalog.ADDON, options),
+                        pick.getNumber()));
+            }
+        }
+        MalatangQuote.Quote quote = MalatangQuote.price(
+                new MalatangQuote.ShopFees(shop.getPackingPrice(), shop.getDeliveryPrice()),
+                param.getOrderType(), goods, flavor, addons, coupon);
+        if (quote.payAmount == null || quote.payAmount.signum() < 0) {
+            throw exception(new ErrorCode(400, "报价金额不正确"));
+        }
+        return quote;
+    }
+
+    private void persistOptions(long shopId, String orderSn, MalatangQuote.Quote quote) {
+        if (quote.flavorOptionId != null && quote.flavorAmount != null) {
+            StoreOrderOptionDO flavor = new StoreOrderOptionDO();
+            flavor.setOrderId(orderSn);
+            flavor.setShopId(shopId);
+            flavor.setOptionId(quote.flavorOptionId);
+            flavor.setKind(ShopOptionCatalog.FLAVOR);
+            flavor.setName(quote.flavorName);
+            flavor.setUnitPrice(quote.flavorAmount);
+            flavor.setNumber(1);
+            flavor.setAmount(quote.flavorAmount);
+            storeOrderOptionMapper.insert(flavor);
+        }
+        for (MalatangQuote.AddonLine line : quote.addonLines) {
+            StoreOrderOptionDO addon = new StoreOrderOptionDO();
+            addon.setOrderId(orderSn);
+            addon.setShopId(shopId);
+            addon.setOptionId(line.optionId);
+            addon.setKind(ShopOptionCatalog.ADDON);
+            addon.setName(line.name);
+            addon.setUnitPrice(line.unitPrice);
+            addon.setNumber(line.number);
+            addon.setAmount(line.amount);
+            storeOrderOptionMapper.insert(addon);
+        }
+    }
+
+    private void issueQueueNumber(AppStoreOrderQueryVo orderInfo) {
+        if (orderInfo.getShopId() == null || orderInfo.getOrderId() == null) {
+            return;
+        }
+        if (orderInfo.getNumberId() != null && orderInfo.getNumberId() > 0) {
+            return;
+        }
+        List<OrderNumberDO> rows = orderNumberMapper.selectByShop(orderInfo.getShopId());
+        List<QueueTickets.Ticket> tickets = new ArrayList<>();
+        if (rows != null) {
+            for (OrderNumberDO row : rows) {
+                if (row.getShopId() == null || row.getNumberNo() == null) {
+                    continue;
+                }
+                tickets.add(new QueueTickets.Ticket(row.getShopId(), row.getOrderId(), row.getNumberNo()));
+            }
+        }
+        Integer number = QueueTickets.issue(true, null, orderInfo.getShopId(), tickets);
+        if (number == null) {
+            return;
+        }
+        orderNumberMapper.insert(OrderNumberDO.builder()
+                .orderId(orderInfo.getOrderId())
+                .shopId(orderInfo.getShopId())
+                .numberNo(number)
+                .build());
+        int updated = storeOrderMapper.update(null, Wrappers.<StoreOrderDO>lambdaUpdate()
+                .set(StoreOrderDO::getNumberId, number.longValue())
+                .eq(StoreOrderDO::getOrderId, orderInfo.getOrderId())
+                .eq(StoreOrderDO::getShopId, orderInfo.getShopId())
+                .isNull(StoreOrderDO::getNumberId));
+        if (updated > 0) {
+            orderInfo.setNumberId(number);
+        }
+    }
+
+    private List<AppOrderOptionVo> loadOrderOptions(String orderId, Long shopId) {
+        List<AppOrderOptionVo> result = new ArrayList<>();
+        if (orderId == null || shopId == null) {
+            return result;
+        }
+        List<StoreOrderOptionDO> rows = storeOrderOptionMapper.selectByOrderAndShop(orderId, shopId);
+        if (rows == null) {
+            return result;
+        }
+        for (StoreOrderOptionDO row : rows) {
+            if (row.getShopId() == null || !shopId.equals(row.getShopId())) {
+                continue;
+            }
+            AppOrderOptionVo vo = new AppOrderOptionVo();
+            vo.setKind(row.getKind());
+            vo.setName(row.getName());
+            vo.setUnitPrice(row.getUnitPrice());
+            vo.setNumber(row.getNumber());
+            vo.setAmount(row.getAmount());
+            result.add(vo);
+        }
+        return result;
+    }
+
+    private static final class PricedGoods {
+        private BigDecimal amount = BigDecimal.ZERO;
+        private int totalNum;
     }
 
     private StoreOrderDO findByRequestKey(Long uid, long shopId, String requestKey) {
@@ -600,6 +808,7 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
         if (orderInfo == null) {
             return;
         }
+        issueQueueNumber(orderInfo);
         userService.incPayCount(orderInfo.getUid());
         storeOrderStatusService.create(orderInfo.getUid(), orderInfo.getId(), OrderLogEnum.PAY_ORDER_SUCCESS.getValue(),
                 OrderLogEnum.PAY_ORDER_SUCCESS.getDesc());
@@ -751,6 +960,7 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
         List<StoreOrderCartInfoDO> cartInfos = storeOrderCartInfoService.list(wrapper);
 
         order.setCartInfo(cartInfos);
+        order.setOptions(loadOrderOptions(order.getOrderId(), order.getShopId()));
 
         StoreShopDO storeShopDO = appStoreShopService.getById(order.getShopId());
         order.setShop(StoreShopConvert.INSTANCE.convert02(storeShopDO));

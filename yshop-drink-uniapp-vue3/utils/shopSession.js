@@ -18,6 +18,10 @@ export function draftKey(shopId) {
   return `orderDraft:${shopId}`
 }
 
+export function malatangKey(shopId) {
+  return `malatang:${shopId}`
+}
+
 function shopIdentity(shop) {
   if (shop == null) {
     return ''
@@ -45,6 +49,7 @@ export function createShopSession(storage) {
     coupon: null,
     credential: null,
     orderDraft: null,
+    malatang: null,
   }
 
   function clearShop(shopId) {
@@ -52,6 +57,7 @@ export function createShopSession(storage) {
     storage.remove(couponKey(shopId))
     storage.remove(credentialKey(shopId))
     storage.remove(draftKey(shopId))
+    storage.remove(malatangKey(shopId))
     storage.remove(LEGACY_CART_KEY)
     storage.remove(LEGACY_COUPON_KEY)
     storage.remove(LEGACY_CREDENTIAL_KEY)
@@ -71,6 +77,7 @@ export function createShopSession(storage) {
         state.coupon = null
         state.credential = null
         state.orderDraft = null
+        state.malatang = null
         state.shopId = nextId
         return { cleared: true, previousShopId, shopId: nextId }
       }
@@ -124,6 +131,25 @@ export function createShopSession(storage) {
       }
       storage.remove(LEGACY_CREDENTIAL_KEY)
       return true
+    },
+    setMalatang(selection) {
+      if (!state.shopId) {
+        return false
+      }
+      state.malatang = selection || null
+      if (selection) {
+        storage.set(malatangKey(state.shopId), selection)
+      } else {
+        storage.remove(malatangKey(state.shopId))
+      }
+      return true
+    },
+    readMalatang(shopId) {
+      const id = shopIdentity(shopId)
+      if (!id) {
+        return null
+      }
+      return storage.get(malatangKey(id)) || null
     },
     setOrderDraft(draft) {
       if (!state.shopId) {

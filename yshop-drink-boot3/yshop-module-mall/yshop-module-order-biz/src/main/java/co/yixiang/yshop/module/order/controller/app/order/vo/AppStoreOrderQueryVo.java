@@ -176,8 +176,26 @@ public class AppStoreOrderQueryVo implements Serializable {
     @Schema(description = "取餐时间", required = true)
     private LocalDateTime getTime;
 
-    @Schema(description = "取餐号", required = true)
+    @Schema(description = "取餐号。空表示还没发号", required = true)
     private Integer numberId;
+
+    @Schema(description = "打包费。空表示未配置")
+    private BigDecimal packingPrice;
+
+    @Schema(description = "口味选项")
+    private Long flavorOptionId;
+
+    @Schema(description = "口味名称")
+    private String flavorName;
+
+    @Schema(description = "口味价格")
+    private BigDecimal flavorPrice;
+
+    @Schema(description = "加料合计")
+    private BigDecimal addonPrice;
+
+    @Schema(description = "口味和加料明细")
+    private List<AppOrderOptionVo> options;
 
     @Schema(description = "购买类型:takein=自取,takeout=外卖", required = true)
     private String orderType;

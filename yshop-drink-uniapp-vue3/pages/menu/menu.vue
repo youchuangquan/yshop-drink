@@ -194,6 +194,32 @@
 					 </view>
 					 <scroll-view class="cart-list" scroll-y>
 					  <view class="wrapper">
+					   <view class="item" v-if="flavors.length">
+						<view class="left">
+						 <view class="name">口味</view>
+						 <view class="props">价格来自本店配置</view>
+						</view>
+						<view class="center">
+						 <text v-for="item in flavors" :key="item.id" @tap="onPickFlavor(item.id)">
+						  {{ item.name }} ￥{{ item.price }}{{ sameOptionId(selection.flavorOptionId, item.id) ? ' 已选' : '' }}
+						 </text>
+						</view>
+					   </view>
+					   <view class="item" v-for="item in addonChoices" :key="item.id">
+						<view class="left">
+						 <view class="name">加料 {{ item.name }}</view>
+						 <view class="props">￥{{ item.price }}</view>
+						</view>
+						<view class="right">
+						 <button type="default" plain size="mini" class="btn" hover-class="none" @tap="onAddon(item.id, -1)">
+						  <view class="iconfont iconsami-select"></view>
+						 </button>
+						 <view class="number">{{ addonNumber(selection, item.id) }}</view>
+						 <button type="primary" class="btn" size="min" hover-class="none" @tap="onAddon(item.id, 1)">
+						  <view class="iconfont iconadd-select"></view>
+						 </button>
+						</view>
+					   </view>
 					   <view class="item" v-for="(item, index) in cart" :key="`${item.id}-${item.valueStr || index}`">
 						<view class="left">
 						 <view class="name">{{ item.name }}</view>
@@ -243,7 +269,8 @@ import { useMainStore } from '@/store/store'
 import { storeToRefs } from 'pinia'
 import { onLoad,onShow ,onPullDownRefresh,onHide,onUnload} from '@dcloudio/uni-app'
 import { formatDateTime,kmUnit,throttle } from '@/utils/util'
-import { cartKey } from '@/utils/shopSession'
+import { cartKey, malatangKey } from '@/utils/shopSession'
+import { pricedOptions, pickFlavor, changeAddon, addonNumber, normalizeSelection, sameOptionId } from '@/utils/malatang'
 import {
   shopNearby,
   menuGoods
@@ -263,6 +290,9 @@ const currentCateId = ref(0)
 const cateScrollTop = ref(0)
 const menuScrollIntoView = ref('')
 const cart = ref([])
+const selection = ref({ flavorOptionId: null, addons: [] })
+const flavors = computed(() => pricedOptions(store.value && store.value.options, 'FLAVOR'))
+const addonChoices = computed(() => pricedOptions(store.value && store.value.options, 'ADDON'))
 const goodDetailModalVisible = ref(false)
 const good= ref({})
 const category = ref({})
@@ -300,13 +330,18 @@ const getCartGoodsPrice = computed(() =>{ //计算购物车总价
 	let price = cart.value.reduce((acc, cur) => acc + cur.number * cur.price, 0);
 	return parseFloat(price).toFixed(2);
 })
+const shopMinPrice = computed(() => {
+	const raw = store.value && store.value.minPrice != null ? store.value.minPrice : store.value && store.value.min_price
+	if (raw == null || raw === '') return null
+	const amount = Number(raw)
+	return Number.isFinite(amount) ? amount : null
+})
 const disabledPay = computed(() => { //是否达到起送价
-	return orderType.value == 'takeout' && (getCartGoodsPrice < parseFloat(store.value.min_price)) ? true :
-		false
+	return orderType.value == 'takeout' && shopMinPrice.value != null && getCartGoodsPrice < shopMinPrice.value
 })
 const spread = computed(() => { //差多少元起送
-	if (orderType.value != 'takeout') return
-	return parseFloat((store.value.min_price - getCartGoodsPrice).toFixed(2))
+	if (orderType.value != 'takeout' || shopMinPrice.value == null) return
+	return parseFloat((shopMinPrice.value - getCartGoodsPrice).toFixed(2))
 })
 
 // 监听自定义事件（需与 $off 使用同一引用）
@@ -449,7 +484,29 @@ const persistCart = () => {
 	uni.setStorageSync(cartKey(store.value.id), JSON.parse(JSON.stringify(cart.value)))
 	uni.removeStorageSync('cart')
 }
+const loadSelection = () => {
+	if (!store.value.id) {
+		selection.value = { flavorOptionId: null, addons: [] }
+		return
+	}
+	selection.value = normalizeSelection(uni.getStorageSync(malatangKey(store.value.id)))
+}
+const saveSelection = () => {
+	if (!store.value.id) {
+		return
+	}
+	uni.setStorageSync(malatangKey(store.value.id), JSON.parse(JSON.stringify(selection.value)))
+}
+const onPickFlavor = (optionId) => {
+	selection.value = pickFlavor(selection.value, optionId)
+	saveSelection()
+}
+const onAddon = (optionId, delta) => {
+	selection.value = changeAddon(selection.value, optionId, delta)
+	saveSelection()
+}
 const refreshCart = () =>{
+	loadSelection()
 	if (goods.value && goods.value.length > 0) {
 		let newGoods = goods.value;
 		cart.value = [];

@@ -24,8 +24,8 @@
 					<!-- store info end -->
 					<list-cell :hover="false" padding="50rpx 30rpx">
 						<view class="w-100 d-flex flex-column">
-							<view class="d-flex align-items-center just-content-center">
-								<view class="order-detail-page__sort-num">{{ order.paid == 1 ? order.numberId : '--' }}</view>
+							<view class="d-flex align-items-center just-content-center" v-if="queueNumberVisible(order.numberId)">
+								<view class="order-detail-page__sort-num">{{ order.numberId }}</view>
 							</view>
 							<!-- steps begin -->
 							<view class="d-flex just-content-center">
@@ -123,7 +123,19 @@
 								<view>订单金额</view>
 								<view class="font-weight-bold">￥{{ order.totalPrice }}</view>
 							</view>
-							<view class="order-detail-pay-cell" v-if="order.orderType == 'takeout'">
+							<view class="order-detail-pay-cell" v-if="order.flavorName && order.flavorPrice != null">
+								<view>口味 {{ order.flavorName }}</view>
+								<view class="font-weight-bold">￥{{ order.flavorPrice }}</view>
+							</view>
+							<view class="order-detail-pay-cell" v-for="(opt, index) in addonLines(order)" :key="`${opt.name}-${index}`">
+								<view>加料 {{ opt.name }} x{{ opt.number }}</view>
+								<view class="font-weight-bold">￥{{ opt.amount }}</view>
+							</view>
+							<view class="order-detail-pay-cell" v-if="order.packingPrice != null">
+								<view>打包费</view>
+								<view class="font-weight-bold">￥{{ order.packingPrice }}</view>
+							</view>
+							<view class="order-detail-pay-cell" v-if="order.orderType == 'takeout' && order.payPostage != null">
 								<view>配送费</view>
 								<view class="font-weight-bold">￥{{ order.payPostage }}</view>
 							</view>
@@ -198,6 +210,7 @@ import { onLoad} from '@dcloudio/uni-app'
 import { useMainStore } from '@/store/store'
 import { storeToRefs } from 'pinia'
 import { formatDateTime } from '@/utils/util'
+import { queueNumberVisible, addonLines } from '@/utils/malatang'
 import {
   orderDetail,
   orderReceive,

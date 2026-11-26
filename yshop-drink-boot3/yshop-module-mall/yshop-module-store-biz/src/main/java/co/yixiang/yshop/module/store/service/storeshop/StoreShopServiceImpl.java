@@ -18,6 +18,8 @@ import co.yixiang.yshop.framework.common.pojo.PageResult;
 
 import co.yixiang.yshop.module.store.convert.storeshop.StoreShopConvert;
 import co.yixiang.yshop.module.store.dal.mysql.storeshop.StoreShopMapper;
+import co.yixiang.yshop.module.store.service.shopoption.ShopOptionService;
+import org.springframework.transaction.annotation.Transactional;
 
 import static co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.FORBIDDEN;
 import static co.yixiang.yshop.framework.common.exception.util.ServiceExceptionUtil.exception;
@@ -34,8 +36,11 @@ public class StoreShopServiceImpl implements StoreShopService {
 
     @Resource
     private StoreShopMapper shopMapper;
+    @Resource
+    private ShopOptionService shopOptionService;
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Long createShop(StoreShopCreateReqVO createReqVO) {
         rejectIfBoundToAnotherShop(null);
         //管理员只能绑定一个门店
@@ -52,11 +57,13 @@ public class StoreShopServiceImpl implements StoreShopService {
         Integer status = doShopStatus(shop.getStartTime(),shop.getEndTime());
         shop.setStatus(status);
         shopMapper.insert(shop);
+        shopOptionService.replace(shop.getId(), createReqVO.getOptions());
         // 返回
         return shop.getId();
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void updateShop(StoreShopUpdateReqVO updateReqVO) {
         assertOwnShop(updateReqVO.getId());
         //管理员只能绑定一个门店
@@ -76,6 +83,7 @@ public class StoreShopServiceImpl implements StoreShopService {
         Integer status = doShopStatus(updateObj.getStartTime(),updateObj.getEndTime());
         updateObj.setStatus(status);
         shopMapper.updateById(updateObj);
+        shopOptionService.replace(updateReqVO.getId(), updateReqVO.getOptions());
     }
 
 
@@ -107,9 +115,11 @@ public class StoreShopServiceImpl implements StoreShopService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void deleteShop(Long id) {
         assertOwnShop(id);
         validateShopExists(id);
+        shopOptionService.replace(id, java.util.Collections.emptyList());
         // 删除
         shopMapper.deleteById(id);
     }

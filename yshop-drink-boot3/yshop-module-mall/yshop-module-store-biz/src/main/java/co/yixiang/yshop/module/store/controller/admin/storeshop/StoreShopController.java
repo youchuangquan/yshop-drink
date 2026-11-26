@@ -23,6 +23,7 @@ import co.yixiang.yshop.framework.excel.core.util.ExcelUtils;
 import co.yixiang.yshop.module.store.controller.admin.storeshop.vo.*;
 import co.yixiang.yshop.module.store.dal.dataobject.storeshop.StoreShopDO;
 import co.yixiang.yshop.module.store.convert.storeshop.StoreShopConvert;
+import co.yixiang.yshop.module.store.service.shopoption.ShopOptionService;
 import co.yixiang.yshop.module.store.service.storeshop.StoreShopService;
 
 @Tag(name = "管理后台 - 门店管理")
@@ -33,6 +34,8 @@ public class StoreShopController {
 
     @Resource
     private StoreShopService shopService;
+    @Resource
+    private ShopOptionService shopOptionService;
 
     @PostMapping("/create")
     @Operation(summary = "创建门店管理")
@@ -64,7 +67,11 @@ public class StoreShopController {
     @PreAuthorize("@ss.hasPermission('store:shop:query')")
     public CommonResult<StoreShopRespVO> getShop(@RequestParam("id") Long id) {
         StoreShopDO shop = shopService.getShop(id);
-        return success(StoreShopConvert.INSTANCE.convert(shop));
+        StoreShopRespVO vo = StoreShopConvert.INSTANCE.convert(shop);
+        if (vo != null && vo.getId() != null) {
+            vo.setOptions(shopOptionService.listByShop(vo.getId()));
+        }
+        return success(vo);
     }
 
     @GetMapping("/list")

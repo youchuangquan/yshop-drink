@@ -49,6 +49,29 @@
       <el-form-item label="配送价格" prop="deliveryPrice">
         <el-input v-model="formData.deliveryPrice" placeholder="请输入配送价格" />
       </el-form-item>
+      <el-form-item label="打包费" prop="packingPrice">
+        <el-input v-model="formData.packingPrice" placeholder="不填表示未配置，不会按 0 元收取" />
+      </el-form-item>
+      <el-form-item label="口味">
+        <div>
+          <div v-for="(item, index) in optionsOf('FLAVOR')" :key="'flavor-' + index" class="mb-2">
+            <el-input v-model="item.name" placeholder="口味名称" style="width: 160px; margin-right: 8px" />
+            <el-input v-model="item.price" placeholder="价格，必填" style="width: 140px; margin-right: 8px" />
+            <el-button @click="removeOption(item)">删除</el-button>
+          </div>
+          <el-button @click="addOption('FLAVOR')">添加口味</el-button>
+        </div>
+      </el-form-item>
+      <el-form-item label="加料">
+        <div>
+          <div v-for="(item, index) in optionsOf('ADDON')" :key="'addon-' + index" class="mb-2">
+            <el-input v-model="item.name" placeholder="加料名称" style="width: 160px; margin-right: 8px" />
+            <el-input v-model="item.price" placeholder="价格，必填" style="width: 140px; margin-right: 8px" />
+            <el-button @click="removeOption(item)">删除</el-button>
+          </div>
+          <el-button @click="addOption('ADDON')">添加加料</el-button>
+        </div>
+      </el-form-item>
       <el-form-item label="公告" prop="notice">
         <el-input type="textarea" rows="5"  v-model="formData.notice" placeholder="请输入公告" />
       </el-form-item>
@@ -111,6 +134,8 @@ const formData = ref({
   distance: undefined,
   minPrice: undefined,
   deliveryPrice: undefined,
+  packingPrice: undefined,
+  options: [] as any[],
   notice: undefined,
   status: undefined,
   adminId: undefined,
@@ -159,6 +184,9 @@ const open = async (type: string, id?: number) => {
     try {
       formData.value = await ShopApi.getShop(id)
       formData.value.adminId = formData.value.adminId.map(Number)
+      if (!Array.isArray(formData.value.options)) {
+        formData.value.options = []
+      }
     } finally {
       formLoading.value = false
     }
@@ -177,6 +205,18 @@ const submitForm = async () => {
   formLoading.value = true
   try {
     const data = formData.value as unknown as ShopApi.ShopVO
+    if (!Array.isArray(data.options)) {
+      data.options = []
+    }
+    for (const row of data.options) {
+      if (!row.name || row.price === undefined || row.price === null || row.price === '') {
+        message.error('口味和加料必须填写名称，价格用门店配置，不能留空')
+        return
+      }
+    }
+    if (data.packingPrice === '' || data.packingPrice === undefined) {
+      data.packingPrice = null
+    }
     if (formType.value === 'create') {
       await ShopApi.createShop(data)
       message.success(t('common.createSuccess'))
@@ -192,6 +232,16 @@ const submitForm = async () => {
   }
 }
 
+const optionsOf = (kind: string) => (formData.value.options || []).filter((row) => row.kind === kind)
+const addOption = (kind: string) => {
+  if (!Array.isArray(formData.value.options)) {
+    formData.value.options = []
+  }
+  formData.value.options.push({ kind, name: '', price: undefined })
+}
+const removeOption = (item) => {
+  formData.value.options = formData.value.options.filter((row) => row !== item)
+}
 const formRef1 = ref() // 表单 Ref
 const openForm = () => {
   formRef1.value.open()
@@ -233,6 +283,8 @@ const resetForm = () => {
     distance: undefined,
     minPrice: undefined,
     deliveryPrice: undefined,
+    packingPrice: undefined,
+    options: [] as any[],
     notice: undefined,
     status: 1,
     adminId: undefined,

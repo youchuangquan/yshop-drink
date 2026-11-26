@@ -17,7 +17,7 @@
 							<view class="font-size-lg text-color-base order-item__shop">
 								{{ item.shop.name }}
 							</view>
-							<view class="font-size-sm text-color-assist">取餐号：{{ item.numberId }}</view>
+							<view class="font-size-sm text-color-assist" v-if="queueNumberVisible(item.numberId)">取餐号：{{ item.numberId }}</view>
 							<view class="font-size-sm text-color-assist">订单编号：{{ item.orderId }}</view>
 						</view>
 						<view class="font-size-lg text-color-primary">
@@ -74,6 +74,7 @@ import { useMainStore } from '@/store/store'
 import { storeToRefs } from 'pinia'
 import { onLoad,onPullDownRefresh,onReachBottom} from '@dcloudio/uni-app'
 import { formatDateTime,kmUnit } from '@/utils/util'
+import { queueNumberVisible } from '@/utils/malatang'
 import {
   orderGetOrders,
   orderReceive

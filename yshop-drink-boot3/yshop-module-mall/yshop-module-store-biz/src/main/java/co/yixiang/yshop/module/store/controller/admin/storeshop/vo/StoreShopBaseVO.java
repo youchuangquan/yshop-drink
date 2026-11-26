@@ -63,6 +63,12 @@ public class StoreShopBaseVO {
     @Schema(description = "配送价格", required = true, example = "11771")
     private BigDecimal deliveryPrice;
 
+    @Schema(description = "打包费。不填表示未配置，不能当成 0")
+    private BigDecimal packingPrice;
+
+    @Schema(description = "口味和加料。价格必填，不传则保留原配置")
+    private List<ShopOptionItemVO> options;
+
     @Schema(description = "公告", required = true)
     @NotNull(message = "公告不能为空")
     private String notice;

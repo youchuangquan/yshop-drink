@@ -15,6 +15,7 @@ import co.yixiang.yshop.framework.common.pojo.CommonResult;
 import co.yixiang.yshop.framework.security.core.annotations.PreAuthenticated;
 import co.yixiang.yshop.module.member.controller.app.user.vo.AppUserOrderCountVo;
 import co.yixiang.yshop.module.order.controller.app.order.param.*;
+import co.yixiang.yshop.module.order.controller.app.order.vo.AppMalatangQuoteVo;
 import co.yixiang.yshop.module.order.controller.app.order.vo.AppStoreOrderQueryVo;
 import co.yixiang.yshop.module.order.dal.dataobject.storeorder.StoreOrderDO;
 import co.yixiang.yshop.module.order.dal.redis.order.AsyncOrderRedisDAO;
@@ -70,6 +71,16 @@ public class AppOrderController {
 ;
 
 
+
+    /**
+     * 按门店配置报价。不创建订单。
+     */
+    @PreAuthenticated
+    @PostMapping("/quote")
+    @Operation(summary = "麻辣烫报价")
+    public CommonResult<AppMalatangQuoteVo> quote(@RequestBody @Valid AppOrderParam param) {
+        return success(appStoreOrderService.quote(getLoginUserId(), param));
+    }
 
     /**
      * 订单创建

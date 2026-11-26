@@ -14,6 +14,10 @@ export function orderSubmit(data) {
   return api.post(`/order/create`, data, { login: true })
 }
 
+export function orderQuote(data) {
+  return api.post(`/order/quote`, data, { login: true })
+}
+
 
 
 /**

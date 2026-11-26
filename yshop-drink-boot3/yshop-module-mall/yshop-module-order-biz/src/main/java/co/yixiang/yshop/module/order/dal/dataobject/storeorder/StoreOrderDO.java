@@ -99,6 +99,26 @@ public class StoreOrderDO extends BaseDO {
      */
     private BigDecimal payPostage;
     /**
+     * 打包费。空表示这单没有配置打包费。
+     */
+    private BigDecimal packingPrice;
+    /**
+     * 口味选项
+     */
+    private Long flavorOptionId;
+    /**
+     * 口味名称
+     */
+    private String flavorName;
+    /**
+     * 口味价格，来自门店配置
+     */
+    private BigDecimal flavorPrice;
+    /**
+     * 加料合计，来自门店配置
+     */
+    private BigDecimal addonPrice;
+    /**
      * 抵扣金额
      */
     private BigDecimal deductionPrice;

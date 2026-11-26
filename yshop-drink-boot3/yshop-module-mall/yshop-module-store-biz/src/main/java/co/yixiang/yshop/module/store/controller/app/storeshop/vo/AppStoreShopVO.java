@@ -1,5 +1,6 @@
 package co.yixiang.yshop.module.store.controller.app.storeshop.vo;
 
+import co.yixiang.yshop.module.store.controller.admin.storeshop.vo.ShopOptionItemVO;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -53,6 +54,12 @@ public class AppStoreShopVO {
 
     @Schema(description = "配送价格", required = true, example = "11771")
     private BigDecimal deliveryPrice;
+
+    @Schema(description = "打包费。空表示未配置")
+    private BigDecimal packingPrice;
+
+    @Schema(description = "本店口味和加料")
+    private List<ShopOptionItemVO> options;
 
     @Schema(description = "公告", required = true)
     private String notice;

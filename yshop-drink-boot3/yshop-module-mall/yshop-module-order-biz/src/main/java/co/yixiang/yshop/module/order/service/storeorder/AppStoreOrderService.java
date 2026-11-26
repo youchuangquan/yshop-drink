@@ -4,6 +4,7 @@ import co.yixiang.yshop.module.order.controller.app.order.param.AppComputeOrderP
 import co.yixiang.yshop.module.order.controller.app.order.param.AppOrderParam;
 import co.yixiang.yshop.module.order.controller.app.order.param.AppPayParam;
 import co.yixiang.yshop.module.order.controller.app.order.vo.AppConfirmOrderVo;
+import co.yixiang.yshop.module.order.controller.app.order.vo.AppMalatangQuoteVo;
 import co.yixiang.yshop.module.order.controller.app.order.vo.AppStoreOrderQueryVo;
 import co.yixiang.yshop.module.order.dal.dataobject.storeorder.StoreOrderDO;
 import com.baomidou.mybatisplus.extension.service.IService;
@@ -37,6 +38,11 @@ public interface AppStoreOrderService extends IService<StoreOrderDO> {
      * @return map
      */
     Map<String, Object> createOrder(Long uid, AppOrderParam param);
+
+    /**
+     * 按本店配置报价。不创建订单，不扣库存，不核销优惠券。
+     */
+    AppMalatangQuoteVo quote(Long uid, AppOrderParam param);
 
 
     /**

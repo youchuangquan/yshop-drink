@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createMemoryStorage, createShopSession, cartKey, couponKey, credentialKey } from '../utils/shopSession.js'
+import { createMemoryStorage, createShopSession, cartKey, couponKey, credentialKey, malatangKey } from '../utils/shopSession.js'
 
 test('switching shops clears the previous cart, coupon, credential and legacy cache', () => {
   const storage = createMemoryStorage({
@@ -15,6 +15,7 @@ test('switching shops clears the previous cart, coupon, credential and legacy ca
   session.setCoupon({ id: 7, shopId: '1', value: 5 })
   session.setCredential('shop-1-session')
   session.setOrderDraft({ remark: '少辣' })
+  session.setMalatang({ flavorOptionId: 5, addons: [{ optionId: 6, number: 1 }] })
 
   const switched = session.bindShop({ id: 2, name: '麻辣烫店' })
   assert.equal(switched.cleared, true)
@@ -26,6 +27,8 @@ test('switching shops clears the previous cart, coupon, credential and legacy ca
   assert.equal(storage.get(cartKey(1)), undefined)
   assert.equal(storage.get(couponKey(1)), undefined)
   assert.equal(storage.get(credentialKey(1)), undefined)
+  assert.equal(storage.get(malatangKey(1)), undefined)
+  assert.equal(session.readMalatang(1), null)
   assert.equal(storage.get('cart'), undefined)
   assert.equal(storage.get('mycoupon'), undefined)
   assert.equal(storage.get('shopCredential'), undefined)

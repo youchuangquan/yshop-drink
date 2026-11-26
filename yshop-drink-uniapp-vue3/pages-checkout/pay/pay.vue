@@ -123,13 +123,17 @@
 				</list-cell>
 				<list-cell last>
 					<view class="flex-fill d-flex justify-content-end align-items-center">
-						<view>
-							总计￥{{ total }}
-							<text v-if="orderType == 'takeout'">,配送费￥{{ store.deliveryPrice }}</text>
-							<text v-if="coupon.value">,￥-{{ coupon.value }}</text>
+						<view v-if="quote">
+							商品￥{{ quote.goodsAmount }}
+							<text v-if="quotedFee(quote.flavorAmount) != null">,口味￥{{ quote.flavorAmount }}</text>
+							<text v-if="quotedFee(quote.addonAmount) != null">,加料￥{{ quote.addonAmount }}</text>
+							<text v-if="quotedFee(quote.packingAmount) != null">,打包费￥{{ quote.packingAmount }}</text>
+							<text v-if="quotedFee(quote.deliveryAmount) != null">,配送费￥{{ quote.deliveryAmount }}</text>
+							<text v-if="quotedFee(quote.couponAmount) != null">,￥-{{ quote.couponAmount }}</text>
 							,实付
 						</view>
-						<view class="font-size-extra-lg font-weight-bold">￥{{ amount }}</view>
+						<view v-else>正在按门店配置报价</view>
+						<view class="font-size-extra-lg font-weight-bold">￥{{ quotePayText(quote) || '--' }}</view>
 					</view>
 				</list-cell>
 			</view>
@@ -184,9 +188,9 @@
 		<!-- 付款栏 begin -->
 		<view class="pay-page__footer w-100 position-fixed fixed-bottom d-flex align-items-center justify-content-between bg-white">
 			<view class="pay-page__footer-label font-size-sm">合计：</view>
-			<view class="pay-page__footer-amount font-size-lg flex-fill">￥{{ amount }}</view>
+			<view class="pay-page__footer-amount font-size-lg flex-fill">￥{{ quotePayText(quote) || '--' }}</view>
 			<view class="pay-page__footer-btn bg-primary h-100 d-flex align-items-center just-content-center text-color-white font-size-base"
-				@tap="debounce(submit, 500)">付款</view>
+				@tap="debounce(submit, 500)">{{ quote ? '付款' : '报价中' }}</view>
 		</view>
 		<!-- 付款栏 end -->
 		<modal :show="ensureAddressModalVisible" custom :mask-closable="false" :radius="'0rpx'" width="90%">
@@ -229,10 +233,13 @@ import  debounce  from '@/uni_modules/uv-ui-tools/libs/function/debounce'
 
 import {
   orderSubmit,
+  orderQuote,
   payUnify,
   getWechatConfig
 } from '@/api/order'
 import { createRequestKey } from '@/utils/request-key'
+import { malatangKey } from '@/utils/shopSession'
+import { normalizeSelection, quotedFee, quotePayText } from '@/utils/malatang'
 import {
   couponCount
 } from '@/api/coupon'
@@ -245,6 +252,8 @@ const active = ref(false)
 const title = ref('支付')
 const jsStr = ref('')
 const cart = ref([])
+const quote = ref(null)
+const selection = ref({ flavorOptionId: null, addons: [] })
 const form = ref({
 	remark: ''
 })
@@ -298,26 +307,7 @@ const subscribeMss = ref({
 })// 微信订阅信息
 const uToast = ref()
 
-const total = computed(() =>{
-	return cart.value.reduce((acc, cur) => acc + cur.number * cur.price, 0);
-})
-const amount = computed(() =>{
-	let amount = cart.value.reduce((acc, cur) => acc + cur.number * cur.price, 0);
-	// 加配送费
-	if (store.value.distance > 0 && orderType.value == 'takeout') {
-		amount += parseFloat(store.value.deliveryPrice);
-	}
-
-	
-	// 减去优惠券
-	if (main.mycoupon.hasOwnProperty('id')) {
-		amount -= parseFloat(main.mycoupon.value);
-	}
-	if(amount < 0){
-		amount = 0
-	}
-	return amount.toFixed(2);
-})
+const amount = computed(() => quotePayText(quote.value))
 
 onShow(() => {
 	coupon.value = main.mycoupon
@@ -344,8 +334,30 @@ onShow(() => {
 	
 	let paytype = uni.getStorageSync('paytype');
 	payType.value = paytype ? paytype : 'weixin';
-	
+	refreshQuote()
 })
+const refreshQuote = async () => {
+	quote.value = null
+	cart.value = store.value && store.value.id ? (uni.getStorageSync('cart:' + store.value.id) || []) : []
+	selection.value = normalizeSelection(store.value && store.value.id ? uni.getStorageSync(malatangKey(store.value.id)) : null)
+	if (!cart.value.length || !store.value.id) {
+		return
+	}
+	try {
+		quote.value = await orderQuote({
+			orderType: orderType.value,
+			shopId: store.value.id,
+			couponId: coupon.value && coupon.value.id ? coupon.value.id : '',
+			productId: cart.value.map((item) => item.id),
+			spec: cart.value.map((item) => String(item.valueStr || '').replace(/,/g, '|')),
+			number: cart.value.map((item) => item.number),
+			flavorOptionId: selection.value.flavorOptionId,
+			addons: selection.value.addons
+		})
+	} catch (error) {
+		quote.value = null
+	}
+}
 onHide(() => {
 	subscribeMss.value = [];
 	coupons.value = 0;
@@ -470,6 +482,21 @@ const goToShop = () => {
 	});
 }
 const submit = () => {
+	if (!cart.value.length) {
+		uToast.value.show({
+			message: '请先去点餐',
+			type: 'error'
+		});
+		return
+	}
+	if (!quote.value || quote.value.payAmount == null || quote.value.payAmount === '') {
+		uToast.value.show({
+			message: '请等待门店报价',
+			type: 'error'
+		});
+		refreshQuote()
+		return
+	}
 	if (orderType.value == 'takeout') {
 		// 外卖类型
 		if (typeof address.value.id == 'undefined') {
@@ -480,10 +507,11 @@ const submit = () => {
 			return
 		}
 
-		// 起送价钱
-		if (store.value.min_price > total.value) {
+		const minPrice = store.value.minPrice != null ? Number(store.value.minPrice) : null
+		const goodsAmount = quote.value.goodsAmount != null ? Number(quote.value.goodsAmount) : null
+		if (minPrice != null && goodsAmount != null && goodsAmount < minPrice) {
 			uToast.value.show({
-				message: '本店外卖起送价为￥' + store.value.min_price,
+				message: '本店外卖起送价为￥' + minPrice,
 				type: 'error'
 			});
 			return
@@ -525,7 +553,7 @@ const pay = async() => {
 	
 
 	// #endif
-	if(amount.value == 0){
+	if(quote.value && Number(quote.value.payAmount) === 0){
 		payType.value = 'yue'
 	}
 	uni.showLoading({
@@ -544,6 +572,8 @@ const pay = async() => {
 		spec: [],
 		number: [],
 		couponId: coupon.value.id ? coupon.value.id : 0, // 优惠券id
+		flavorOptionId: selection.value.flavorOptionId,
+		addons: selection.value.addons,
 		requestKey: checkoutRequestKey || (checkoutRequestKey = createRequestKey())
 	};
 

@@ -46,6 +46,12 @@ public class AppOrderParam implements Serializable {
     @Schema(description = "数量", required = true)
     private List<String>  number;
 
+    @Schema(description = "口味选项 id。不传表示不选。价格由服务端读取，请求里的价格无效")
+    private Long flavorOptionId;
+
+    @Schema(description = "加料。只认选项 id 和数量")
+    private List<AppAddonPickParam> addons;
+
     @Schema(description = "支付类型", required = true)
     private String payType;
 
