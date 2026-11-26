@@ -63,7 +63,7 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { onShow } from '@dcloudio/uni-app'
+import { onLoad, onShow } from '@dcloudio/uni-app'
 import { storeToRefs } from 'pinia'
 import { useMainStore } from '@/store/store'
 import { createRequestKey } from '@/utils/request-key'
@@ -83,8 +83,17 @@ import { hotpotSlots, hotpotReserve, hotpotCancel } from '@/api/hotpot'
 
 const main = useMainStore()
 const { isLogin, store } = storeToRefs(main)
-const shopId = computed(() => (store.value && shopReady(store.value.id) ? store.value.id : ''))
-const shopName = computed(() => (shopId.value && store.value && store.value.name ? store.value.name : ''))
+const queryShopId = ref('')
+const shopId = computed(() => {
+  if (shopReady(queryShopId.value)) return queryShopId.value
+  if (store.value && shopReady(store.value.id)) return store.value.id
+  return ''
+})
+const shopName = computed(() => {
+  if (!store.value || !store.value.name || !shopReady(store.value.id)) return ''
+  if (String(store.value.id) !== String(shopId.value)) return ''
+  return store.value.name
+})
 const slots = ref([])
 const loadState = ref('idle')
 const submitting = ref(false)
@@ -202,6 +211,12 @@ const cancelHold = async () => {
 watch(shopId, () => {
   hold.value = null
   pending = null
+})
+
+onLoad((option) => {
+  if (option && shopReady(option.shopId)) {
+    queryShopId.value = option.shopId
+  }
 })
 
 onShow(() => {
