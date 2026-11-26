@@ -211,6 +211,35 @@
           }
         }
       ]
+    },
+    {
+      "root": "pages-hotpot",
+      "pages": [
+        {
+          "path": "reserve/reserve",
+          "style": {
+            "navigationBarTitleText": "火锅预约",
+            "navigationBarTextStyle": "black",
+            "navigationBarBackgroundColor": "#ffffff"
+          }
+        },
+        {
+          "path": "scan/scan",
+          "style": {
+            "navigationBarTitleText": "扫码开桌",
+            "navigationBarTextStyle": "black",
+            "navigationBarBackgroundColor": "#ffffff"
+          }
+        },
+        {
+          "path": "bill/bill",
+          "style": {
+            "navigationBarTitleText": "桌次账单与结账",
+            "navigationBarTextStyle": "black",
+            "navigationBarBackgroundColor": "#ffffff"
+          }
+        }
+      ]
     }
   ],
   "globalStyle": {

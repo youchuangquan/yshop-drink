@@ -82,6 +82,16 @@
 					</uv-cell-group>
 				</view>
 			</view>
+			<view class="mine-service">
+				<view class="mine-service__title font-size-lg text-color-base font-weight-bold">火锅</view>
+				<view class="u-m-t-20">
+					<uv-cell-group>
+						<uv-cell title="火锅预约" :isLink="true" @click="goHotpot('/pages-hotpot/reserve/reserve')"></uv-cell>
+						<uv-cell title="扫码开桌" :isLink="true" @click="goHotpot('/pages-hotpot/scan/scan')"></uv-cell>
+						<uv-cell title="桌次账单" :isLink="true" @click="goHotpot('/pages-hotpot/bill/bill')"></uv-cell>
+					</uv-cell-group>
+				</view>
+			</view>
 		</view>
 	</layout>
 </template>
@@ -145,6 +155,9 @@ const login = () => {
 	uni.navigateTo({
 		url: '/pages-user/login/login'
 	})
+}
+const goHotpot = (url) => {
+	uni.navigateTo({ url })
 }
 const packages = () => {
 	if (!isLogin.value) {
