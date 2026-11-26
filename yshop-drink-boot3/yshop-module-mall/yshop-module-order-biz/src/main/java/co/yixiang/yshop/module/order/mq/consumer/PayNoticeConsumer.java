@@ -21,7 +21,7 @@ public class PayNoticeConsumer extends AbstractRedisStreamMessageListener<PayNot
     @Override
     public void onMessage(PayNoticeMessage message) {
         log.info("[onMessage][支付消息内容({})]", message);
-        appStoreOrderService.paySuccess(message.getOrderId(),message.getPayType());
+        appStoreOrderService.paySuccess(message.getOrderId(), message.getPayType(), message.getNotifyKey());
 
     }
 }

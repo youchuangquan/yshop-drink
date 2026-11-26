@@ -7,6 +7,7 @@ import co.yixiang.yshop.framework.common.constant.ShopConstants;
 import co.yixiang.yshop.framework.common.enums.OrderInfoEnum;
 import co.yixiang.yshop.framework.common.enums.ShopCommonEnum;
 import co.yixiang.yshop.framework.common.exception.ErrorCode;
+import co.yixiang.yshop.framework.common.order.OrderRequestGate;
 import co.yixiang.yshop.framework.common.shop.ShopAccess;
 import co.yixiang.yshop.framework.common.util.servlet.ServletUtils;
 import co.yixiang.yshop.framework.ip.core.utils.IPUtils;
@@ -33,8 +34,10 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.validation.annotation.Validated;
 
 import jakarta.annotation.Resource;
@@ -74,6 +77,8 @@ public class AppScoreOrderServiceImpl extends ServiceImpl<ScoreOrderMapper, Scor
     private ShopUserIntegralService shopUserIntegralService;
     @Resource
     private  AppUserAddressService appUserAddressService;
+    @Resource
+    private PlatformTransactionManager transactionManager;
 
     private static final String STOCK_LOCK_KEY = "score:order:stock:lock";
 
@@ -84,9 +89,25 @@ public class AppScoreOrderServiceImpl extends ServiceImpl<ScoreOrderMapper, Scor
      * @param appScoreOrderParam
      */
     @Override
-    @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
-    public void submit(Long uid,AppScoreOrderParam appScoreOrderParam) {
+    public void submit(Long uid, AppScoreOrderParam appScoreOrderParam) {
         long shopId = ShopAccess.requirePositiveShopId(appScoreOrderParam.getShopId());
+        OrderRequestGate.open(appScoreOrderParam.getRequestKey(), false,
+                key -> {
+                    ScoreOrderDO existing = orderMapper.selectOne(new LambdaQueryWrapper<ScoreOrderDO>()
+                            .eq(ScoreOrderDO::getUid, uid)
+                            .eq(ScoreOrderDO::getShopId, shopId)
+                            .eq(ScoreOrderDO::getRequestKey, key)
+                            .last("LIMIT 1"));
+                    return existing == null ? null : Boolean.TRUE;
+                },
+                key -> {
+                    new TransactionTemplate(transactionManager).executeWithoutResult(status ->
+                            submitNew(uid, appScoreOrderParam, shopId, key));
+                    return Boolean.TRUE;
+                });
+    }
+
+    private void submitNew(Long uid, AppScoreOrderParam appScoreOrderParam, long shopId, String requestKey) {
         ScoreProductDO scoreProductDO = appScoreProductService.getOne(new LambdaQueryWrapper<ScoreProductDO>()
                 .eq(ScoreProductDO::getId, appScoreOrderParam.getProductId())
                 .eq(ScoreProductDO::getShopId, shopId));
@@ -118,6 +139,7 @@ public class AppScoreOrderServiceImpl extends ServiceImpl<ScoreOrderMapper, Scor
                 .customerPhone(userAddressDO.getPhone())
                 .ip(ServletUtils.getClientIP())
                 .orderId(orderSn)
+                .requestKey(requestKey)
                 .shopId(shopId)
                 .productId(scoreProductDO.getId())
                 .number(Integer.valueOf(appScoreOrderParam.getNum()))

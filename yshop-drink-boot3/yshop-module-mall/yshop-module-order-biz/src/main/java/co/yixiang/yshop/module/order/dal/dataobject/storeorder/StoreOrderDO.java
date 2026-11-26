@@ -47,6 +47,10 @@ public class StoreOrderDO extends BaseDO {
      */
     private String orderId;
     /**
+     * 客户端稳定请求键。空值是旧客户端，不是防重。
+     */
+    private String requestKey;
+    /**
      * 额外订单号
      */
     private String extendOrderId;

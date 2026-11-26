@@ -1,6 +1,8 @@
 package co.yixiang.yshop.module.score.service.scoreorder;
 
 import co.yixiang.yshop.framework.common.enums.ShopCommonEnum;
+import co.yixiang.yshop.framework.common.order.OrderRequestGate;
+import co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils;
 import co.yixiang.yshop.module.member.controller.admin.user.vo.UserRespVO;
 import co.yixiang.yshop.module.member.convert.user.UserConvert;
 import co.yixiang.yshop.module.member.dal.dataobject.user.MemberUserDO;
@@ -9,6 +11,7 @@ import co.yixiang.yshop.module.score.convert.scoreproduct.ScoreProductConvert;
 import co.yixiang.yshop.module.score.dal.dataobject.scoreproduct.ScoreProductDO;
 import co.yixiang.yshop.module.score.dal.mysql.scoreproduct.ScoreProductMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.springframework.stereotype.Service;
 import jakarta.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
@@ -42,11 +45,25 @@ public class ScoreOrderServiceImpl implements ScoreOrderService {
 
     @Override
     public Long createOrder(ScoreOrderCreateReqVO createReqVO) {
-        // 插入
         ScoreOrderDO order = ScoreOrderConvert.INSTANCE.convert(createReqVO);
-        orderMapper.insert(order);
-        // 返回
-        return order.getId();
+        return OrderRequestGate.open(createReqVO.getRequestKey(), false,
+                key -> {
+                    long shopId = ShopSecurityUtils.currentStaffShop(order.getShopId());
+                    ScoreOrderDO existing = orderMapper.selectOne(Wrappers.<ScoreOrderDO>lambdaQuery()
+                            .eq(ScoreOrderDO::getUid, order.getUid())
+                            .eq(ScoreOrderDO::getShopId, shopId)
+                            .eq(ScoreOrderDO::getRequestKey, key)
+                            .last("LIMIT 1"));
+                    return existing == null ? null : existing.getId();
+                },
+                key -> {
+                    if (key != null) {
+                        order.setShopId(ShopSecurityUtils.currentStaffShop(order.getShopId()));
+                        order.setRequestKey(key);
+                    }
+                    orderMapper.insert(order);
+                    return order.getId();
+                });
     }
 
     @Override

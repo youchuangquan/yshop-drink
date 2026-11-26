@@ -9,6 +9,7 @@ import co.yixiang.yshop.framework.common.enums.PayIdEnum;
 import co.yixiang.yshop.framework.common.enums.ShopCommonEnum;
 import co.yixiang.yshop.framework.common.exception.ErrorCode;
 import co.yixiang.yshop.framework.common.pojo.PageResult;
+import co.yixiang.yshop.framework.common.order.OrderRequestGate;
 import co.yixiang.yshop.framework.common.shop.ShopAccess;
 import co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils;
 import co.yixiang.yshop.framework.tenant.core.context.TenantContextHolder;
@@ -33,6 +34,7 @@ import co.yixiang.yshop.module.order.enums.UpdateOrderEnum;
 import co.yixiang.yshop.module.order.service.storeorderstatus.StoreOrderStatusService;
 import co.yixiang.yshop.module.product.service.storeproduct.AppStoreProductService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.egzosn.pay.common.bean.RefundOrder;
 import com.egzosn.pay.common.bean.RefundResult;
 import com.egzosn.pay.spring.boot.core.PayServiceManager;
@@ -102,12 +104,29 @@ public class StoreOrderServiceImpl implements StoreOrderService {
 
     @Override
     public Long createStoreOrder(StoreOrderCreateReqVO createReqVO) {
-        // 插入
         StoreOrderDO storeOrder = StoreOrderConvert.INSTANCE.convert(createReqVO);
-        storeOrder.setShopId(ShopSecurityUtils.currentStaffShop(storeOrder.getShopId()));
-        storeOrderMapper.insert(storeOrder);
-        // 返回
-        return storeOrder.getId();
+        long shopId = ShopSecurityUtils.currentStaffShop(storeOrder.getShopId());
+        storeOrder.setShopId(shopId);
+        return OrderRequestGate.open(createReqVO.getRequestKey(), false,
+                key -> {
+                    StoreOrderDO existing = findByRequestKey(storeOrder.getUid(), shopId, key);
+                    return existing == null ? null : existing.getId();
+                },
+                key -> {
+                    if (key != null) {
+                        storeOrder.setRequestKey(key);
+                    }
+                    storeOrderMapper.insert(storeOrder);
+                    return storeOrder.getId();
+                });
+    }
+
+    private StoreOrderDO findByRequestKey(Long uid, long shopId, String requestKey) {
+        return storeOrderMapper.selectOne(Wrappers.<StoreOrderDO>lambdaQuery()
+                .eq(StoreOrderDO::getUid, uid)
+                .eq(StoreOrderDO::getShopId, shopId)
+                .eq(StoreOrderDO::getRequestKey, requestKey)
+                .last("LIMIT 1"));
     }
 
     @Override

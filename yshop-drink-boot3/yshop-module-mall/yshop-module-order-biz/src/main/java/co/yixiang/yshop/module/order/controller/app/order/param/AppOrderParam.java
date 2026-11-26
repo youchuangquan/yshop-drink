@@ -61,4 +61,8 @@ public class AppOrderParam implements Serializable {
     @Schema(description = "订单号", required = true)
     private String orderId;
 
+    @Size(max = 64, message = "长度超过了限制")
+    @Schema(description = "稳定请求键。同一个键重复提交返回已有订单。不传仍可下单，但不是防重；空字符串会拒绝")
+    private String requestKey;
+
 }

@@ -6,12 +6,13 @@ import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.core.util.StrUtil;
 import co.yixiang.yshop.framework.common.constant.ShopConstants;
 import co.yixiang.yshop.framework.common.enums.OrderInfoEnum;
-import co.yixiang.yshop.framework.common.enums.PayIdEnum;
 import co.yixiang.yshop.framework.common.enums.ShopCommonEnum;
 import co.yixiang.yshop.framework.common.exception.ErrorCode;
+import co.yixiang.yshop.framework.common.order.OrderRequestGate;
+import co.yixiang.yshop.framework.common.order.PayChannels;
+import co.yixiang.yshop.framework.common.order.PaymentReconciliation;
 import co.yixiang.yshop.framework.common.shop.ShopAccess;
 import co.yixiang.yshop.framework.tenant.core.aop.TenantIgnore;
-import co.yixiang.yshop.framework.tenant.core.context.TenantContextHolder;
 import co.yixiang.yshop.module.coupon.dal.dataobject.couponuser.CouponUserDO;
 import co.yixiang.yshop.module.coupon.service.couponuser.AppCouponUserService;
 import co.yixiang.yshop.module.member.controller.app.user.vo.AppUserQueryVo;
@@ -33,7 +34,9 @@ import co.yixiang.yshop.module.order.convert.storeorder.StoreOrderConvert;
 import co.yixiang.yshop.module.order.dal.dataobject.ordernumber.OrderNumberDO;
 import co.yixiang.yshop.module.order.dal.dataobject.storeorder.StoreOrderDO;
 import co.yixiang.yshop.module.order.dal.dataobject.storeordercartinfo.StoreOrderCartInfoDO;
+import co.yixiang.yshop.module.order.dal.dataobject.paynotice.PayNoticeDO;
 import co.yixiang.yshop.module.order.dal.mysql.ordernumber.OrderNumberMapper;
+import co.yixiang.yshop.module.order.dal.mysql.paynotice.PayNoticeMapper;
 import co.yixiang.yshop.module.order.dal.mysql.storeorder.StoreOrderMapper;
 import co.yixiang.yshop.module.order.enums.AppFromEnum;
 import co.yixiang.yshop.module.order.enums.OrderLogEnum;
@@ -42,8 +45,6 @@ import co.yixiang.yshop.module.order.enums.PayTypeEnum;
 import co.yixiang.yshop.module.order.service.storeorder.dto.StatusDto;
 import co.yixiang.yshop.module.order.service.storeordercartinfo.StoreOrderCartInfoService;
 import co.yixiang.yshop.module.order.service.storeorderstatus.StoreOrderStatusService;
-import co.yixiang.yshop.module.pay.dal.dataobject.merchantdetails.MerchantDetailsDO;
-import co.yixiang.yshop.module.pay.service.merchantdetails.MerchantDetailsService;
 import co.yixiang.yshop.module.product.dal.dataobject.storeproduct.StoreProductDO;
 import co.yixiang.yshop.module.product.dal.dataobject.storeproductattrvalue.StoreProductAttrValueDO;
 import co.yixiang.yshop.module.product.service.storeproduct.AppStoreProductService;
@@ -56,8 +57,6 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.egzosn.pay.spring.boot.core.PayServiceManager;
-import com.egzosn.pay.spring.boot.core.bean.MerchantPayOrder;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBlockingDeque;
@@ -66,13 +65,13 @@ import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.redisson.client.codec.StringCodec;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.validation.annotation.Validated;
 
-import java.io.UnsupportedEncodingException;
 import java.math.BigDecimal;
-import java.net.URLEncoder;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
@@ -110,8 +109,6 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
     @Resource
     private UserBillService billService;
     @Resource
-    private PayServiceManager manager;
-    @Resource
     private WeixinNoticeProducer weixinNoticeProducer;
     @Resource
     private RedissonClient redissonClient;
@@ -128,7 +125,11 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
     @Resource
     private AsyncStoreOrderService asyncStoreOrderService;
     @Resource
-    private MerchantDetailsService merchantDetailsService;
+    private PayNoticeMapper payNoticeMapper;
+    @Resource
+    private PlatformTransactionManager transactionManager;
+    @Resource
+    private UnsetLatePaymentHold latePaymentHold;
 
     private static final String LOCK_KEY = "cart:check:stock:lock";
     private static final String STOCK_LOCK_KEY = "cart:do:stock:lock";
@@ -166,8 +167,25 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
      * @return YxStoreOrder
      */
     @Override
-    @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
-    public Map<String, Object> createOrder(Long uid,  AppOrderParam param) {
+    public Map<String, Object> createOrder(Long uid, AppOrderParam param) {
+        long shopId = ShopAccess.requirePositiveShopId(param.getShopId());
+        return OrderRequestGate.open(param.getRequestKey(), false,
+                key -> {
+                    StoreOrderDO existing = findByRequestKey(uid, shopId, key);
+                    if (existing == null) {
+                        return null;
+                    }
+                    Map<String, Object> map = new HashMap<>();
+                    map.put("orderId", existing.getOrderId());
+                    return map;
+                },
+                key -> new TransactionTemplate(transactionManager).execute(status -> doCreateOrder(uid, param, key)));
+    }
+
+    /**
+     * 旧报文不带 requestKey 时仍会创建订单。那一次不是防重。
+     */
+    private Map<String, Object> doCreateOrder(Long uid, AppOrderParam param, String requestKey) {
         if(OrderLogEnum.ORDER_TAKE_DESK.getValue().equals(param.getOrderType())
                 && StrUtil.isBlank(param.getDeskNumber())){
             throw exception(STORE_ORDER_DESK_NOT);
@@ -316,6 +334,9 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
             //storeOrder.setUnique(key);
             storeOrder.setShippingType(OrderInfoEnum.SHIPPIING_TYPE_1.getValue());
             storeOrder.setOrderType(param.getOrderType());
+            if (requestKey != null) {
+                storeOrder.setRequestKey(requestKey);
+            }
 
 
             boolean res = this.save(storeOrder);
@@ -359,6 +380,14 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
         return map;
     }
 
+    private StoreOrderDO findByRequestKey(Long uid, long shopId, String requestKey) {
+        return storeOrderMapper.selectOne(Wrappers.<StoreOrderDO>lambdaQuery()
+                .eq(StoreOrderDO::getUid, uid)
+                .eq(StoreOrderDO::getShopId, shopId)
+                .eq(StoreOrderDO::getRequestKey, requestKey)
+                .last("LIMIT 1"));
+    }
+
     /**
      * 第三方支付
      * @param uid  用户id
@@ -385,79 +414,15 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
             throw exception(ORDER_PAY_FINISH);
         }
 
-        MemberUserDO memberUserDO = userService.getUser(uid);
-        Map<String, Object> map = new LinkedHashMap<>();
-        BigDecimal price = BigDecimal.ZERO;
-        String msg = "";
-        String detailsId = "";
-        if(orderInfo != null) {
-            price = orderInfo.getPayPrice();
-            msg = "商品购买";
-        }else if(userBillDO != null){
-            //todo 充值商业版本才有 官网购买：https://www.yixiang.co
+        PayTypeEnum payType = PayTypeEnum.toType(param.getPaytype());
+        if (PayTypeEnum.YUE == payType) {
+            this.yuePay(param.getUni(), uid);
+            Map<String, Object> map = new LinkedHashMap<>();
+            map.put("status", "ok");
+            return map;
         }
-        switch (PayTypeEnum.toType(param.getPaytype())){
-            case WEIXIN:
-                if(AppFromEnum.H5.getValue().equals(param.getFrom())){
-                    detailsId = PayIdEnum.WX_WECHAT.getValue();
-                    //todo 如果启用微信H5支付充值 需要另外增加一个配置用于同步跳转页面 比如下面的增加了一个id=5的配置,微信支付公众号与H%配置是一样 基本
-//                    if(orderInfo != null) {
-//                        detailsId = "4";
-//                    }else{
-//                        detailsId = "5";
-//                    }
-                    MerchantPayOrder payOrder = new MerchantPayOrder(detailsId, "MWEB", msg,
-                            msg, price, param.getUni());
-
-                    Map<String, Object> payOrderInfo = manager.getOrderInfo(payOrder);
-                    MerchantDetailsDO merchantDetailsDO = merchantDetailsService.getMerchantDetails(detailsId);
-                    String url = merchantDetailsDO.getReturnUrl();
-
-                    String newUrl = "";
-                    try {
-                        newUrl =  String.format("%s%s", payOrderInfo.get("mweb_url"), "&redirect_url=" + URLEncoder.encode(url,"UTF-8"));
-                    } catch (UnsupportedEncodingException e) {
-                        log.error(e.getMessage());
-                    }
-                    map.put("data",newUrl);
-                    map.put("trade_type","MWEB");
-                } else if(AppFromEnum.WECHAT.getValue().equals(param.getFrom())){//微信公众号
-//                    MerchantPayOrder payOrder = new MerchantPayOrder("4", "JSAPI", msg,
-//                            msg, price, param.getUni());
-                    MerchantPayOrder payOrder = new MerchantPayOrder(PayIdEnum.WX_WECHAT.getValue(), "JSAPI", msg,
-                            msg, price, param.getUni());
-                    payOrder.setOpenid(memberUserDO.getOpenid());
-                    map.put("data",manager.getOrderInfo(payOrder));
-                    map.put("trade_type","W-JSAPI");
-                } else {//微信小程序
-                    MerchantPayOrder payOrder = new MerchantPayOrder(PayIdEnum.WX_MINIAPP.getValue(), "JSAPI", msg,
-                            msg, price, param.getUni());
-                    payOrder.setOpenid(memberUserDO.getRoutineOpenid());
-                    map.put("data",manager.getOrderInfo(payOrder));
-                    map.put("trade_type","JSAPI");
-
-                }
-                break;
-            case YUE:
-                this.yuePay(param.getUni(), uid);
-                map.put("status","ok");
-                break;
-            case ALI:
-                //h5支付
-                detailsId = PayIdEnum.ALI_H5.getValue();
-                //todo 如果启用支付宝H5支付充值 需要另外增加一个配置用于同步跳转页面 比如下面的增加了一个id=6的配置
-//                if(orderInfo != null) {
-//                    detailsId = "1";
-//                }else{
-//                    detailsId = "6";
-//                }
-                MerchantPayOrder payOrder = new MerchantPayOrder(detailsId, "WAP", msg,
-                        msg, price, param.getUni());
-                map.put("data",manager.toPay(payOrder));
-
-            default:
-        }
-        return map;
+        // 微信、支付宝以及其它未接通渠道不发起支付，也不把订单标成已付。
+        throw exception(ORDER_PAY_CHANNEL_CLOSED);
     }
 
     /**
@@ -491,62 +456,161 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
     }
 
 
+    @Override
+    public void paySuccess(String orderId, String payType) {
+        paySuccess(orderId, payType, null);
+    }
+
     /**
-     * 支付成功后操作
-     *
-     * @param orderId 订单号
-     * @param payType 支付方式
+     * 支付通知入账。同一通知键重放不会再次付款或完成。
+     * 微信、支付宝未接通，不会把订单标成已付。
      */
     @Override
-    @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
     @TenantIgnore
-    public void paySuccess(String orderId, String payType) {
-        //处理充值与会员卡订单
-        UserBillDO userBillDO =  billService.getOne(new LambdaQueryWrapper<UserBillDO>()
-                .eq(UserBillDO::getExtendField,orderId));
-        if(userBillDO != null) {
-            userBillDO.setStatus(ShopCommonEnum.IS_STATUS_1.getValue());
-            billService.updateById(userBillDO);
-        if(BillDetailEnum.TYPE_1.getValue().equals(userBillDO.getType())){
-                //充值
-                userService.incMoney(userBillDO.getUid(), userBillDO.getNumber());
+    public void paySuccess(String orderId, String payType, String notifyKey) {
+        String key = notifyKey;
+        if (key == null || key.trim().isEmpty()) {
+            key = PayChannels.localNotifyKey(payType, orderId);
+        }
+        String resolvedKey = key;
+        try {
+            PaymentReconciliation.Result result = new TransactionTemplate(transactionManager).execute(status ->
+                    reconcilePayment(orderId, payType, resolvedKey));
+            if (result != null && !result.settled()) {
+                log.info("支付通知未入账 orderId={} payType={} disposition={}", orderId, payType, result.disposition());
+                refuseUnsettled(result.disposition());
+            }
+        } catch (RuntimeException ex) {
+            if (OrderRequestGate.isDuplicate(ex)) {
+                log.info("支付通知重复，不再入账 orderId={} payType={}", orderId, payType);
+                throw exception(ORDER_PAY_FINISH);
+            }
+            throw ex;
+        }
+    }
+
+    /**
+     * 未接通的渠道只记账并返回，避免回调一直重试。
+     * 其它未入账结果要抛出去，让余额扣款跟这次入账一起回滚。
+     */
+    private void refuseUnsettled(PaymentReconciliation.Disposition disposition) {
+        if (disposition == PaymentReconciliation.Disposition.UNCONNECTED) {
+            return;
+        }
+        if (disposition == PaymentReconciliation.Disposition.LATE_HELD) {
+            throw exception(ORDER_STATUS_ERROR);
+        }
+        throw exception(ORDER_PAY_FINISH);
+    }
+
+    private PaymentReconciliation.Result reconcilePayment(String orderId, String payType, String notifyKey) {
+        return PaymentReconciliation.apply(notifyKey, payType, orderId, new PaymentReconciliation.Orders() {
+            @Override
+            public PaymentReconciliation.OrderState load(String id) {
+                return loadPayable(id);
             }
 
+            @Override
+            public boolean markPaidIfUnpaid(String id, String type) {
+                return markPaidOnce(id, type);
+            }
+        }, new PaymentReconciliation.Notices() {
+            @Override
+            public PaymentReconciliation.Disposition find(String key) {
+                PayNoticeDO row = payNoticeMapper.selectOne(Wrappers.<PayNoticeDO>lambdaQuery()
+                        .eq(PayNoticeDO::getNotifyKey, key)
+                        .last("LIMIT 1"));
+                if (row == null || row.getDisposition() == null) {
+                    return null;
+                }
+                return PaymentReconciliation.Disposition.valueOf(row.getDisposition());
+            }
+
+            @Override
+            public boolean claim(String key, PaymentReconciliation.Disposition disposition) {
+                PayNoticeDO row = new PayNoticeDO();
+                row.setNotifyKey(key);
+                row.setOrderId(orderId);
+                row.setPayType(payType);
+                row.setDisposition(disposition.name());
+                payNoticeMapper.insert(row);
+                return true;
+            }
+
+            @Override
+            public void replace(String key, PaymentReconciliation.Disposition disposition) {
+                payNoticeMapper.update(null, Wrappers.<PayNoticeDO>lambdaUpdate()
+                        .set(PayNoticeDO::getDisposition, disposition.name())
+                        .eq(PayNoticeDO::getNotifyKey, key));
+            }
+        }, latePaymentHold, () -> completePayment(orderId, payType));
+    }
+
+    private PaymentReconciliation.OrderState loadPayable(String orderId) {
+        UserBillDO userBillDO = billService.getOne(new LambdaQueryWrapper<UserBillDO>()
+                .eq(UserBillDO::getExtendField, orderId)
+                .last("LIMIT 1"));
+        if (userBillDO != null) {
+            boolean paid = ShopCommonEnum.IS_STATUS_1.getValue().equals(userBillDO.getStatus());
+            return new PaymentReconciliation.OrderState(!paid, paid, false);
+        }
+        StoreOrderDO order = storeOrderMapper.selectOne(Wrappers.<StoreOrderDO>lambdaQuery()
+                .eq(StoreOrderDO::getOrderId, orderId)
+                .last("LIMIT 1"));
+        if (order == null) {
+            return null;
+        }
+        boolean paid = OrderInfoEnum.PAY_STATUS_1.getValue().equals(order.getPaid());
+        boolean completed = OrderInfoEnum.STATUS_3.getValue().equals(order.getStatus());
+        boolean refunding = order.getRefundStatus() != null
+                && !OrderInfoEnum.REFUND_STATUS_0.getValue().equals(order.getRefundStatus());
+        boolean awaiting = OrderInfoEnum.STATUS_0.getValue().equals(order.getStatus());
+        return new PaymentReconciliation.OrderState(!paid && !completed && !refunding && awaiting, paid, completed);
+    }
+
+    private boolean markPaidOnce(String orderId, String payType) {
+        UserBillDO userBillDO = billService.getOne(new LambdaQueryWrapper<UserBillDO>()
+                .eq(UserBillDO::getExtendField, orderId)
+                .last("LIMIT 1"));
+        if (userBillDO != null) {
+            return billService.update(Wrappers.<UserBillDO>lambdaUpdate()
+                    .set(UserBillDO::getStatus, ShopCommonEnum.IS_STATUS_1.getValue())
+                    .eq(UserBillDO::getId, userBillDO.getId())
+                    .eq(UserBillDO::getStatus, ShopCommonEnum.IS_STATUS_0.getValue()));
+        }
+        return storeOrderMapper.update(null, Wrappers.<StoreOrderDO>lambdaUpdate()
+                .set(StoreOrderDO::getPaid, OrderInfoEnum.PAY_STATUS_1.getValue())
+                .set(StoreOrderDO::getPayType, payType)
+                .set(StoreOrderDO::getPayTime, LocalDateTime.now())
+                .eq(StoreOrderDO::getOrderId, orderId)
+                .eq(StoreOrderDO::getPaid, OrderInfoEnum.PAY_STATUS_0.getValue())) > 0;
+    }
+
+    private void completePayment(String orderId, String payType) {
+        UserBillDO userBillDO = billService.getOne(new LambdaQueryWrapper<UserBillDO>()
+                .eq(UserBillDO::getExtendField, orderId)
+                .last("LIMIT 1"));
+        if (userBillDO != null) {
+            if (BillDetailEnum.TYPE_1.getValue().equals(userBillDO.getType())) {
+                userService.incMoney(userBillDO.getUid(), userBillDO.getNumber());
+            }
             return;
         }
-
-        log.info("orderId:[{}]",orderId);
         AppStoreOrderQueryVo orderInfo = getOrderInfo(orderId, null);
-        log.info("orderInfo:[{}]",orderInfo);
-        if(orderInfo == null){
+        if (orderInfo == null) {
             return;
         }
-
-        //更新订单状态
-        LambdaQueryWrapper<StoreOrderDO> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(StoreOrderDO::getOrderId, orderId);
-        StoreOrderDO storeOrder = new StoreOrderDO();
-        storeOrder.setPaid(OrderInfoEnum.PAY_STATUS_1.getValue());
-        storeOrder.setPayType(payType);
-        storeOrder.setPayTime(LocalDateTime.now());
-
-        this.update(storeOrder, wrapper);
-
-        //增加用户购买次数
         userService.incPayCount(orderInfo.getUid());
-        //增加状态
-        storeOrderStatusService.create(orderInfo.getUid(),orderInfo.getId(), OrderLogEnum.PAY_ORDER_SUCCESS.getValue(),
+        storeOrderStatusService.create(orderInfo.getUid(), orderInfo.getId(), OrderLogEnum.PAY_ORDER_SUCCESS.getValue(),
                 OrderLogEnum.PAY_ORDER_SUCCESS.getDesc());
 
-
         MemberUserDO userInfo = userService.getUser(orderInfo.getUid());
-        //增加流水
         String payTypeMsg = PayTypeEnum.WEIXIN.getDesc();
         if (PayTypeEnum.YUE.getValue().equals(payType)) {
             payTypeMsg = PayTypeEnum.YUE.getDesc();
-        }else if (PayTypeEnum.ALI.getValue().equals(payType)) {
+        } else if (PayTypeEnum.ALI.getValue().equals(payType)) {
             payTypeMsg = PayTypeEnum.ALI.getDesc();
-        }else if(PayTypeEnum.CASH.getValue().equals(payType)){
+        } else if (PayTypeEnum.CASH.getValue().equals(payType)) {
             payTypeMsg = PayTypeEnum.CASH.getDesc();
         }
         billService.expend(userInfo.getId(), "购买商品",
@@ -555,24 +619,19 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
                 orderInfo.getPayPrice().doubleValue(), userInfo.getNowMoney().doubleValue(),
                 payTypeMsg + orderInfo.getPayPrice() + "元购买商品");
 
-
-
-        //发送消息队列进行推送消息,堂食不需要
-        if(!OrderLogEnum.ORDER_TAKE_DESK.getValue().equals(orderInfo.getOrderType()) &&
-                userInfo.getLoginType().equals(AppFromEnum.ROUNTINE.getValue())){
+        if (!OrderLogEnum.ORDER_TAKE_DESK.getValue().equals(orderInfo.getOrderType()) &&
+                userInfo.getLoginType().equals(AppFromEnum.ROUNTINE.getValue())) {
             List<StoreOrderCartInfoDO> storeOrderCartInfoDOList = storeOrderCartInfoService
                     .list(new LambdaQueryWrapper<StoreOrderCartInfoDO>()
-                    .eq(StoreOrderCartInfoDO::getOid,orderInfo.getId()));
+                            .eq(StoreOrderCartInfoDO::getOid, orderInfo.getId()));
             List<String> names = storeOrderCartInfoDOList.stream().map(StoreOrderCartInfoDO::getTitle)
                     .collect(Collectors.toList());
-            String productName = StrUtil.join(",",names);
-            weixinNoticeProducer.sendNoticeMessage(orderInfo.getUid(),WechatTempateEnum.PAY_SUCCESS.getValue(),
-                    WechatTempateEnum.SUBSCRIBE.getValue(),orderInfo.getOrderId(),
-                    "","","","",orderInfo.getId(),orderInfo.getNumberId(),
-                    productName,orderInfo.getShopName());
+            String productName = StrUtil.join(",", names);
+            weixinNoticeProducer.sendNoticeMessage(orderInfo.getUid(), WechatTempateEnum.PAY_SUCCESS.getValue(),
+                    WechatTempateEnum.SUBSCRIBE.getValue(), orderInfo.getOrderId(),
+                    "", "", "", "", orderInfo.getId(), orderInfo.getNumberId(),
+                    productName, orderInfo.getShopName());
         }
-
-
     }
 
     /**

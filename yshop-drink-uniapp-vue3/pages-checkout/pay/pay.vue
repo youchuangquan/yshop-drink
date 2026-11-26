@@ -232,6 +232,7 @@ import {
   payUnify,
   getWechatConfig
 } from '@/api/order'
+import { createRequestKey } from '@/utils/request-key'
 import {
   couponCount
 } from '@/api/coupon'
@@ -247,6 +248,7 @@ const cart = ref([])
 const form = ref({
 	remark: ''
 })
+let checkoutRequestKey = ''
 const  ensureAddressModalVisible = ref(false)
 const  takeoutTIme = ref(false) // 外卖取餐时间picker
 const paramsTime = ref({
@@ -541,7 +543,8 @@ const pay = async() => {
 		productId: [],
 		spec: [],
 		number: [],
-		couponId: coupon.value.id ? coupon.value.id : 0 // 优惠券id
+		couponId: coupon.value.id ? coupon.value.id : 0, // 优惠券id
+		requestKey: checkoutRequestKey || (checkoutRequestKey = createRequestKey())
 	};
 
 	cart.value.forEach((item, index) => {
@@ -557,6 +560,7 @@ const pay = async() => {
 		uni.hideLoading();
 		return;
 	}
+	checkoutRequestKey = ''
 	
 	main.DEL_COUPON()
     if(amount.value == 0){

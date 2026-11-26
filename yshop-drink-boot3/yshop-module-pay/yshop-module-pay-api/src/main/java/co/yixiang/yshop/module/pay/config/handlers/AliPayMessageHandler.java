@@ -6,6 +6,7 @@ import com.egzosn.pay.ali.bean.AliPayMessage;
 import com.egzosn.pay.common.api.PayMessageHandler;
 import com.egzosn.pay.common.bean.PayOutMessage;
 import com.egzosn.pay.common.exception.PayErrorException;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import jakarta.annotation.Resource;
@@ -17,6 +18,7 @@ import java.util.Map;
  * @date 2023/7/15
  */
 @Component
+@Slf4j
 public class AliPayMessageHandler implements PayMessageHandler<AliPayMessage, AliPayService> {
 
     @Resource
@@ -40,14 +42,26 @@ public class AliPayMessageHandler implements PayMessageHandler<AliPayMessage, Al
         //交易完成
         if ("TRADE_SUCCESS".equals(trade_status) || "TRADE_FINISHED".equals(trade_status)) {
 
-            String orderId = (String) payMessage.getPayMessage().get("out_trade_no");
-            //消息队列处理
-            payNoticeProducer.sendPayNoticeMessage(orderId,"alipay");
-
-            return payService.getPayOutMessage("success", "成功");
+            String orderId = text(payMessage.getPayMessage().get("out_trade_no"));
+            String notifyKey = text(payMessage.getPayMessage().get("trade_no"));
+            // 支付宝未接通。记下通知号后仍返回失败，入账时也不会把订单标成已付。
+            if (orderId == null || notifyKey == null) {
+                log.warn("支付宝通知缺少订单号或通知键，拒绝入账");
+                return payService.getPayOutMessage("fail", "失败");
+            }
+            payNoticeProducer.sendPayNoticeMessage(orderId, "alipay", notifyKey);
+            return payService.getPayOutMessage("fail", "失败");
 
         }
 
         return payService.getPayOutMessage("fail", "失败");
+    }
+
+    private static String text(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        String value = String.valueOf(raw).trim();
+        return value.isEmpty() ? null : value;
     }
 }

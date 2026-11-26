@@ -60,6 +60,7 @@ import {
   scoreShopDetail
 } from '@/api/score'
 import cookie from '@/utils/cookie'
+import { createRequestKey } from '@/utils/request-key'
 import { useMainStore } from '@/store/store'
 import { storeToRefs } from 'pinia'
 const { proxy } = getCurrentInstance();
@@ -67,6 +68,7 @@ const main = useMainStore()
 const { address,isLogin, store} = storeToRefs(main)
 
 const title = ref("确认订单")
+let exchangeRequestKey = ''
 const product = ref({})
 
 const scoreProductAccent = '#ffcc00'
@@ -107,10 +109,12 @@ const submit = async() => {
 		productId: product.value.id,
 		addressId: address.value.id,
 		num: 1,
-		shopId: store.value.id
+		shopId: store.value.id,
+		requestKey: exchangeRequestKey || (exchangeRequestKey = createRequestKey())
 	})
 
 	if (data) {
+		exchangeRequestKey = ''
 		cookie.remove('score_product')
 		setTimeout(function() {
 			uni.navigateTo({

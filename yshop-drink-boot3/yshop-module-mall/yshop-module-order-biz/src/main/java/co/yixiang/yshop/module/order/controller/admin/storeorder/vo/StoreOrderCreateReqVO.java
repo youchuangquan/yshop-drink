@@ -11,4 +11,7 @@ import jakarta.validation.constraints.*;
 @ToString(callSuper = true)
 public class StoreOrderCreateReqVO extends StoreOrderBaseVO {
 
+    @Schema(description = "稳定请求键。同一个键重复提交返回已有订单。不传不是防重；空字符串会拒绝")
+    private String requestKey;
+
 }
