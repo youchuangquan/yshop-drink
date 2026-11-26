@@ -21,6 +21,12 @@ public final class AdminHotpotCommands {
         private Integer capacity;
 
         @NotBlank
+        private String startTime;
+
+        @NotBlank
+        private String endTime;
+
+        @NotBlank
         private String requestKey;
 
     }
@@ -45,6 +51,23 @@ public final class AdminHotpotCommands {
         @NotNull
         @Min(0)
         private Integer priceFen;
+
+        @NotBlank
+        private String requestKey;
+
+    }
+
+    @Data
+    public static class ReservationSeat {
+
+        @NotNull
+        private Long holdId;
+
+        @NotNull
+        private Long slotId;
+
+        @NotBlank
+        private String signCode;
 
         @NotBlank
         private String requestKey;
