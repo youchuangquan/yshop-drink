@@ -190,7 +190,7 @@
 			<view class="pay-page__footer-label font-size-sm">合计：</view>
 			<view class="pay-page__footer-amount font-size-lg flex-fill">￥{{ quotePayText(quote) || '--' }}</view>
 			<view class="pay-page__footer-btn bg-primary h-100 d-flex align-items-center just-content-center text-color-white font-size-base"
-				@tap="debounce(submit, 500)">{{ quote ? '付款' : '报价中' }}</view>
+				@tap="tapCheckoutPay">{{ quote ? '付款' : '报价中' }}</view>
 		</view>
 		<!-- 付款栏 end -->
 		<modal :show="ensureAddressModalVisible" custom :mask-closable="false" :radius="'0rpx'" width="90%">
@@ -212,7 +212,7 @@
 					<button type="primary" size="mini" plain class="pay-page__modal-change-btn"
 						@click="chooseAddress">修改地址</button>
 				</view>
-				<button type="primary" class="pay-page__modal-submit" @tap="debounce(pay, 500)">确认并付款</button>
+				<button type="primary" class="pay-page__modal-submit" @tap="tapConfirmPay">确认并付款</button>
 			</view>
 		</modal>
 		<uv-toast ref="uToast"></uv-toast>
@@ -238,6 +238,7 @@ import {
   getWechatConfig
 } from '@/api/order'
 import { createRequestKey } from '@/utils/request-key'
+import { createInFlightGuard } from '@/utils/in-flight-guard'
 import { malatangKey } from '@/utils/shopSession'
 import { normalizeSelection, quotedFee, quotePayText } from '@/utils/malatang'
 import {
@@ -258,6 +259,7 @@ const form = ref({
 	remark: ''
 })
 let checkoutRequestKey = ''
+const checkoutGuard = createInFlightGuard()
 const  ensureAddressModalVisible = ref(false)
 const  takeoutTIme = ref(false) // 外卖取餐时间picker
 const paramsTime = ref({
@@ -523,7 +525,23 @@ const submit = () => {
 		pay();
 	}
 }
+const tapCheckoutPay = () => {
+	checkoutGuard.tap(() => debounce(submit, 500))
+}
+const tapConfirmPay = () => {
+	checkoutGuard.tap(() => debounce(pay, 500))
+}
 const pay = async() => {
+	if (!checkoutGuard.tryEnter()) {
+		return
+	}
+	try {
+		await submitCheckoutOrder()
+	} finally {
+		checkoutGuard.leave()
+	}
+}
+const submitCheckoutOrder = async() => {
 	let that = this;
 	// // #ifdef MP-WEIXIN
 	// await new Promise(function(revolve) {

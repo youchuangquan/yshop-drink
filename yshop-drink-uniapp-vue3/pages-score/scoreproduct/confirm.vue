@@ -61,6 +61,7 @@ import {
 } from '@/api/score'
 import cookie from '@/utils/cookie'
 import { createRequestKey } from '@/utils/request-key'
+import { createInFlightGuard } from '@/utils/in-flight-guard'
 import { useMainStore } from '@/store/store'
 import { storeToRefs } from 'pinia'
 const { proxy } = getCurrentInstance();
@@ -69,6 +70,7 @@ const { address,isLogin, store} = storeToRefs(main)
 
 const title = ref("确认订单")
 let exchangeRequestKey = ''
+const exchangeGuard = createInFlightGuard()
 const product = ref({})
 
 const scoreProductAccent = '#ffcc00'
@@ -105,22 +107,29 @@ const submit = async() => {
 		})
 		return
 	}
-	let data = await scoreShopExchange({
-		productId: product.value.id,
-		addressId: address.value.id,
-		num: 1,
-		shopId: store.value.id,
-		requestKey: exchangeRequestKey || (exchangeRequestKey = createRequestKey())
-	})
+	if (!exchangeGuard.tryEnter()) {
+		return
+	}
+	try {
+		let data = await scoreShopExchange({
+			productId: product.value.id,
+			addressId: address.value.id,
+			num: 1,
+			shopId: store.value.id,
+			requestKey: exchangeRequestKey || (exchangeRequestKey = createRequestKey())
+		})
 
-	if (data) {
-		exchangeRequestKey = ''
-		cookie.remove('score_product')
-		setTimeout(function() {
-			uni.navigateTo({
-				url: '/pages-score/scoreproduct/order'
-			})
-		}, 1000)
+		if (data) {
+			exchangeRequestKey = ''
+			cookie.remove('score_product')
+			setTimeout(function() {
+				uni.navigateTo({
+					url: '/pages-score/scoreproduct/order'
+				})
+			}, 1000)
+		}
+	} finally {
+		exchangeGuard.leave()
 	}
 }
 
