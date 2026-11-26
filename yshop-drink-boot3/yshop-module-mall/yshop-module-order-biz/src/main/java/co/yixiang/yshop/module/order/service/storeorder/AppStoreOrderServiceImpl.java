@@ -11,12 +11,14 @@ import co.yixiang.yshop.framework.common.exception.ErrorCode;
 import co.yixiang.yshop.framework.common.exception.ServiceException;
 import co.yixiang.yshop.framework.common.order.MalatangQuote;
 import co.yixiang.yshop.framework.common.order.OrderRequestGate;
+import co.yixiang.yshop.framework.common.order.OrderRequestTenant;
 import co.yixiang.yshop.framework.common.order.PayChannels;
 import co.yixiang.yshop.framework.common.order.PaymentReconciliation;
 import co.yixiang.yshop.framework.common.order.QueueTickets;
 import co.yixiang.yshop.framework.common.order.ShopOptionCatalog;
 import co.yixiang.yshop.framework.common.shop.ShopAccess;
 import co.yixiang.yshop.framework.tenant.core.aop.TenantIgnore;
+import co.yixiang.yshop.framework.tenant.core.context.TenantContextHolder;
 import co.yixiang.yshop.module.coupon.dal.dataobject.couponuser.CouponUserDO;
 import co.yixiang.yshop.module.coupon.service.couponuser.AppCouponUserService;
 import co.yixiang.yshop.module.member.controller.app.user.vo.AppUserQueryVo;
@@ -326,7 +328,7 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
             if (requestKey != null) {
                 storeOrder.setRequestKey(requestKey);
             }
-
+            storeOrder.setTenantId(OrderRequestTenant.slot(TenantContextHolder.getTenantId()));
 
             boolean res = this.save(storeOrder);
             if (!res) {
@@ -589,11 +591,7 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
     }
 
     private StoreOrderDO findByRequestKey(Long uid, long shopId, String requestKey) {
-        return storeOrderMapper.selectOne(Wrappers.<StoreOrderDO>lambdaQuery()
-                .eq(StoreOrderDO::getUid, uid)
-                .eq(StoreOrderDO::getShopId, shopId)
-                .eq(StoreOrderDO::getRequestKey, requestKey)
-                .last("LIMIT 1"));
+        return storeOrderMapper.selectByRequestKeyAnyState(uid, shopId, requestKey);
     }
 
     /**

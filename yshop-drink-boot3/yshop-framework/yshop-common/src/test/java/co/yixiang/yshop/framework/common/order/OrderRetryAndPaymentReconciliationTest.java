@@ -4,7 +4,14 @@ import co.yixiang.yshop.framework.common.exception.ServiceException;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
@@ -148,6 +155,85 @@ class OrderRetryAndPaymentReconciliationTest {
     }
 
     @Test
+    void nullTenantDoesNotCollideButZeroDoes() {
+        MysqlRequestIndex open = new MysqlRequestIndex();
+        open.insert(null, 11L, 2L, "order-key-01", "A");
+        open.insert(null, 11L, 2L, "order-key-01", "B");
+        assertEquals(2, open.size());
+
+        MysqlRequestIndex closed = new MysqlRequestIndex();
+        closed.insert(0L, 11L, 2L, "order-key-01", "S1");
+        assertThrows(DuplicateOrderRequestException.class,
+                () -> closed.insert(0L, 11L, 2L, "order-key-01", "S2"));
+        assertEquals(1, closed.size());
+        assertEquals("S1", closed.find(0L, 11L, 2L, "order-key-01"));
+    }
+
+    @Test
+    void closedTenantConcurrentInsertKeepsOneOrderOneStockAndOneBook() throws Exception {
+        MysqlRequestIndex index = new MysqlRequestIndex();
+        AtomicInteger stock = new AtomicInteger();
+        AtomicInteger books = new AtomicInteger();
+        int threads = 8;
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            Future<?>[] tasks = new Future<?>[threads];
+            for (int i = 0; i < threads; i++) {
+                tasks[i] = pool.submit(() -> {
+                    start.await();
+                    return OrderRequestGate.open("order-key-01", true,
+                            key -> index.find(OrderRequestTenant.slot(null), 11L, 2L, key),
+                            key -> {
+                                long tenant = OrderRequestTenant.slot(null);
+                                String orderNo = index.insert(tenant, 11L, 2L, key, "S1");
+                                stock.incrementAndGet();
+                                books.incrementAndGet();
+                                return orderNo;
+                            });
+                });
+            }
+            start.countDown();
+            for (Future<?> task : tasks) {
+                assertEquals("S1", task.get(10, TimeUnit.SECONDS));
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        assertEquals(0L, OrderRequestTenant.slot(null));
+        assertEquals(8L, OrderRequestTenant.slot(8L));
+        assertEquals(1, index.size());
+        assertEquals(1, stock.get());
+        assertEquals(1, books.get());
+    }
+
+    @Test
+    void sameKeyAfterCancelReturnsTheExistingOrder() {
+        Map<String, String> kept = new HashMap<>();
+        Set<String> live = new HashSet<>();
+        AtomicInteger stock = new AtomicInteger();
+        AtomicInteger books = new AtomicInteger();
+        Function<String, String> place = key -> OrderRequestGate.open(key, true,
+                kept::get,
+                normalized -> {
+                    String orderNo = "S1";
+                    kept.put(normalized, orderNo);
+                    live.add(orderNo);
+                    stock.incrementAndGet();
+                    books.incrementAndGet();
+                    return orderNo;
+                });
+
+        assertEquals("S1", place.apply("order-key-01"));
+        live.clear();
+        assertEquals("S1", place.apply("order-key-01"));
+        assertEquals(1, stock.get());
+        assertEquals(1, books.get());
+        assertEquals(1, kept.size());
+        assertTrue(live.isEmpty());
+    }
+
+    @Test
     void latePaymentIsHeldAndDoesNotComplete() {
         MemBook missing = new MemBook();
         PaymentReconciliation.Result held = notify(missing, "notice-key-09", "yue");
@@ -236,6 +322,38 @@ class OrderRetryAndPaymentReconciliationTest {
         @Override
         public void replace(String notifyKey, PaymentReconciliation.Disposition disposition) {
             rows.put(notifyKey, disposition);
+        }
+    }
+
+    /**
+     * MySQL 唯一索引：tenant_id 为 NULL 时，相同的 uid、shop_id、request_key 仍可插入多行。
+     * tenant_id 为 0 时第二行被拒绝。
+     */
+    private static final class MysqlRequestIndex {
+        private final Map<String, String> rows = new java.util.concurrent.ConcurrentHashMap<>();
+
+        private String find(long tenantSlot, long uid, long shopId, String key) {
+            return rows.get(index(tenantSlot, uid, shopId, key));
+        }
+
+        private String insert(Long tenantId, long uid, long shopId, String key, String orderNo) {
+            if (tenantId == null || key == null) {
+                rows.put(index(tenantId, uid, shopId, key) + "#" + System.nanoTime(), orderNo);
+                return orderNo;
+            }
+            String prev = rows.putIfAbsent(index(tenantId, uid, shopId, key), orderNo);
+            if (prev != null) {
+                throw new DuplicateOrderRequestException();
+            }
+            return orderNo;
+        }
+
+        private int size() {
+            return rows.size();
+        }
+
+        private static String index(Long tenantId, long uid, long shopId, String key) {
+            return tenantId + ":" + uid + ":" + shopId + ":" + key;
         }
     }
 
