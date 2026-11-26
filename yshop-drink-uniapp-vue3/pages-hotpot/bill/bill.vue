@@ -31,17 +31,32 @@
 			<view class="bg-white hotpot-page__block" v-if="bill && bill.sessionId">
 				<view class="font-size-sm text-color-assist" v-if="loadedCode">桌码 {{ loadedCode }}</view>
 				<view class="font-size-lg text-color-base hotpot-page__gap">开台号 {{ bill.sessionId }}</view>
+				<view class="font-size-sm text-color-assist hotpot-page__gap" v-if="bill.version != null">版本 {{ bill.version }}</view>
+				<view class="font-size-sm text-color-assist hotpot-page__gap" v-if="sessionStatusText(bill.status)">状态 {{ sessionStatusText(bill.status) }}</view>
+				<view class="font-size-base text-color-base hotpot-page__gap" v-if="formatFen(bill.payableFen)">应付 ￥{{ formatFen(bill.payableFen) }}</view>
+				<view class="font-size-sm text-color-assist hotpot-page__gap" v-if="bill.payableFen > 0">应付大于 0。结账提交这份账单的 version。收款渠道未接通时，账单保持未支付。</view>
+
+				<view class="font-size-base text-color-base hotpot-page__gap">锅底</view>
+				<view class="font-size-sm text-color-assist hotpot-page__gap" v-if="bill.pots.length === 0">账单没有返回锅底</view>
+				<view class="hotpot-page__line" v-for="(pot, index) in bill.pots" :key="`pot-${pot.potId}-${index}`">
+					<view class="font-size-base text-color-base">{{ pot.name }}</view>
+					<view class="font-size-sm text-color-assist" v-if="formatFen(pot.priceFen)">￥{{ formatFen(pot.priceFen) }}</view>
+				</view>
+
+				<view class="font-size-base text-color-base hotpot-page__gap">菜品</view>
+				<view class="font-size-sm text-color-assist hotpot-page__gap" v-if="bill.dishes.length === 0">账单没有返回菜品</view>
+				<view class="hotpot-page__line" v-for="(dish, index) in bill.dishes" :key="`dish-${dish.productId}-${index}`">
+					<view class="font-size-base text-color-base">{{ dish.name }}<text v-if="dish.quantity != null"> × {{ dish.quantity }}</text></view>
+					<view class="font-size-sm text-color-assist" v-if="formatFen(dish.priceFen)">￥{{ formatFen(dish.priceFen) }}</view>
+				</view>
+
 				<view class="font-size-sm text-color-assist hotpot-page__gap" v-if="!checkout">{{ BILL_CHECKOUT_GAP }}</view>
 				<view v-else>
 					<button class="hotpot-page__action" type="primary" :disabled="checking" @tap="startCheckout">按当前账单结账</button>
 					<view class="font-size-sm text-color-assist hotpot-page__gap" v-if="settlement && settlementText(settlement)">{{ settlementText(settlement) }}</view>
 					<view class="font-size-sm text-color-base hotpot-page__gap" v-if="settlement && settlement.paid === true">已支付</view>
-					<view class="font-size-base text-color-base hotpot-page__gap" v-if="settlement && formatFen(settlement.payableFen)">应付 ￥{{ formatFen(settlement.payableFen) }}</view>
-					<view class="hotpot-page__line" v-for="pot in settlementPots" :key="pot.potId || pot.name">
-						<view class="font-size-base text-color-base">{{ pot.name }}</view>
-						<view class="font-size-sm text-color-assist" v-if="formatFen(pot.priceFen)">￥{{ formatFen(pot.priceFen) }}</view>
-					</view>
-					<view class="font-size-sm text-color-assist hotpot-page__gap" v-if="checkoutFailed">结账没有完成，账单未支付。</view>
+					<view class="font-size-sm text-color-assist hotpot-page__gap" v-if="checkoutFailed && failureText">{{ failureText }}</view>
+					<view class="font-size-sm text-color-assist hotpot-page__gap" v-if="checkoutFailed">账单未支付。</view>
 				</view>
 			</view>
 		</view>
@@ -57,9 +72,13 @@ import { hotpotBill, hotpotSettle } from '@/api/hotpot'
 import {
   shopReady,
   checkoutBody,
+  canSettle,
   BILL_CHECKOUT_GAP,
+  presentBill,
   presentSettlement,
   settlementText,
+  settleFailureText,
+  sessionStatusText,
   formatFen,
 } from '@/utils/hotpot'
 
@@ -73,6 +92,7 @@ const loading = ref(false)
 const checking = ref(false)
 const loadState = ref('idle')
 const checkoutFailed = ref(false)
+const failureText = ref('')
 const loadedCode = ref('')
 
 const shopId = computed(() => {
@@ -85,8 +105,7 @@ const shopName = computed(() => {
   if (String(store.value.id) !== String(shopId.value)) return ''
   return store.value.name
 })
-const checkout = computed(() => checkoutBody(bill.value))
-const settlementPots = computed(() => (settlement.value && Array.isArray(settlement.value.pots) ? settlement.value.pots : []))
+const checkout = computed(() => (canSettle(bill.value) ? checkoutBody(bill.value) : null))
 
 const chooseShop = () => {
   uni.navigateTo({ url: '/pages-checkout/shop/shop' })
@@ -106,18 +125,20 @@ const loadBill = async () => {
   bill.value = null
   settlement.value = null
   checkoutFailed.value = false
+  failureText.value = ''
   loadedCode.value = ''
   try {
     const data = await hotpotBill(shopId.value, code)
     if (signCode.value.trim() !== code) {
       return
     }
-    if (!data || data.sessionId == null) {
+    const view = presentBill(data)
+    if (!view) {
       loadState.value = 'failed'
       return
     }
     loadedCode.value = code
-    bill.value = data
+    bill.value = view
     loadState.value = 'ready'
   } catch (error) {
     if (signCode.value.trim() === code) {
@@ -132,23 +153,33 @@ const loadBill = async () => {
 }
 
 const startCheckout = async () => {
-  const body = checkoutBody(bill.value)
+  const current = bill.value
+  const body = canSettle(current) ? checkoutBody(current) : null
   if (!body || checking.value) {
     return
   }
   checking.value = true
   checkoutFailed.value = false
+  failureText.value = ''
   settlement.value = null
   try {
     const data = await hotpotSettle(body)
     const view = presentSettlement(data)
     if (!view) {
       checkoutFailed.value = true
+      failureText.value = '结账没有完成，账单未支付。'
       return
     }
     settlement.value = view
+    if (view.paid !== true && view.zeroPayReleased !== true) {
+      checkoutFailed.value = true
+      failureText.value = view.disposition === 'UNCONNECTED'
+        ? '收款渠道未接通'
+        : '结账没有完成，账单未支付。'
+    }
   } catch (error) {
     checkoutFailed.value = true
+    failureText.value = settleFailureText(error, current.payableFen)
   } finally {
     checking.value = false
   }
