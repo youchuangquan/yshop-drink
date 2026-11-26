@@ -287,6 +287,10 @@ test('customer pages stay on the existing hotpot reads and do not list reservati
   assert.equal(api.includes('/hotpot/walk-in'), false)
 
   const reserve = source('pages-hotpot/reserve/reserve.vue')
+  assert.match(reserve, /onLoad\(/)
+  assert.match(reserve, /option\.shopId/)
+  assert.match(reserve, /queryShopId/)
+  assert.match(reserve, /迟到不会自动取消/)
   const scan = source('pages-hotpot/scan/scan.vue')
   const bill = source('pages-hotpot/bill/bill.vue')
   const pages = source('pages.json')
