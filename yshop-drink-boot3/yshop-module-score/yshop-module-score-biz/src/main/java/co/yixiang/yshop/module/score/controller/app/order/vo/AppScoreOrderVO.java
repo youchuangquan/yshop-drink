@@ -18,6 +18,9 @@ public class AppScoreOrderVO {
     @Schema(description = "用户id", required = true, example = "28397")
     private Long uid;
 
+    @Schema(description = "门店id", example = "1")
+    private Long shopId;
+
     @Schema(description = "订单编号", required = true, example = "28397")
     private String orderId;
 

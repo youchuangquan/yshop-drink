@@ -195,11 +195,15 @@ import {
   ref
 } from 'vue'
 import { onLoad} from '@dcloudio/uni-app'
+import { useMainStore } from '@/store/store'
+import { storeToRefs } from 'pinia'
 import { formatDateTime } from '@/utils/util'
 import {
   orderDetail,
   orderReceive,
 } from '@/api/order'
+const main = useMainStore()
+const { store } = storeToRefs(main)
 const title = ref('订单详情')
 const order = ref({
 	shop:{name:''},
@@ -212,7 +216,7 @@ onLoad((option) => {
 })
 
 const detail =  async(id) => {
-	let data = await orderDetail(id);
+	let data = await orderDetail(id, store.value.id);
 	if (data) {
 		order.value = data;
 	}
@@ -240,7 +244,7 @@ const makePhoneCall = () =>{
 
 // 确认收到货
 const receive  = async(order) => {
-	let data = await orderReceive({uni:order.orderId});
+	let data = await orderReceive({uni:order.orderId, shopId: store.value.id});
 	if (data) {
 		await getOrders(true)
 	}

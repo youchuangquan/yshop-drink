@@ -25,6 +25,9 @@ public class AppPayParam implements Serializable {
     @Schema(description = "订单ID", required = true)
     private String uni;
 
+    @Schema(description = "门店ID", required = true)
+    private String shopId;
+
 //    @Schema(description = "服务商id 当不是余额支付必填1-阿里支付 3-微信支付 这里当编号与数据库id对应", required = true)
 //    private String detailsId;
 }

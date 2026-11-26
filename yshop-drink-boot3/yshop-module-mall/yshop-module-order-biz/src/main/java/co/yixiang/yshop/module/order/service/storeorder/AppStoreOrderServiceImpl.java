@@ -9,6 +9,7 @@ import co.yixiang.yshop.framework.common.enums.OrderInfoEnum;
 import co.yixiang.yshop.framework.common.enums.PayIdEnum;
 import co.yixiang.yshop.framework.common.enums.ShopCommonEnum;
 import co.yixiang.yshop.framework.common.exception.ErrorCode;
+import co.yixiang.yshop.framework.common.shop.ShopAccess;
 import co.yixiang.yshop.framework.tenant.core.aop.TenantIgnore;
 import co.yixiang.yshop.framework.tenant.core.context.TenantContextHolder;
 import co.yixiang.yshop.module.coupon.dal.dataobject.couponuser.CouponUserDO;
@@ -21,6 +22,7 @@ import co.yixiang.yshop.module.member.enums.BillDetailEnum;
 import co.yixiang.yshop.module.member.service.user.MemberUserService;
 import co.yixiang.yshop.module.member.service.useraddress.AppUserAddressService;
 import co.yixiang.yshop.module.member.service.userbill.UserBillService;
+import co.yixiang.yshop.module.member.service.usershopintegral.ShopUserIntegralService;
 import co.yixiang.yshop.module.message.enums.WechatTempateEnum;
 import co.yixiang.yshop.module.message.mq.producer.WeixinNoticeProducer;
 import co.yixiang.yshop.module.message.redismq.msg.OrderMsg;
@@ -76,6 +78,7 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+import static co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.FORBIDDEN;
 import static co.yixiang.yshop.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static co.yixiang.yshop.module.member.enums.ErrorCodeConstants.COUPON_NOT_CONDITION;
 import static co.yixiang.yshop.module.member.enums.ErrorCodeConstants.USER_ADDRESS_NOT_EXISTS;
@@ -120,6 +123,8 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
     private OrderNumberMapper orderNumberMapper;
     @Resource
     private AppCouponUserService appCouponUserService;
+    @Resource
+    private ShopUserIntegralService shopUserIntegralService;
     @Resource
     private AsyncStoreOrderService asyncStoreOrderService;
     @Resource
@@ -176,7 +181,11 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
         Integer totalNum = 0;
         List<String> cartIds = new ArrayList<>();
 
-        StoreShopDO storeShopDO = appStoreShopService.getById(param.getShopId());
+        long shopId = ShopAccess.requirePositiveShopId(param.getShopId());
+        StoreShopDO storeShopDO = appStoreShopService.getById(shopId);
+        if (storeShopDO == null) {
+            throw exception(co.yixiang.yshop.module.store.enums.ErrorCodeConstants.SHOP_NOT_EXISTS);
+        }
 
         BigDecimal sumPrice = BigDecimal.ZERO;
         BigDecimal couponPrice = BigDecimal.ZERO;
@@ -190,7 +199,7 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
                 for (int i = 0;i < productIds.size();i++){
                     String newSku = StrUtil.replace(specs.get(i),"|",",");
                     appStoreProductService.checkProductStock(uid, Long.valueOf(productIds.get(i)),
-                            Integer.valueOf(numbers.get(i)), newSku);
+                            Integer.valueOf(numbers.get(i)), newSku, shopId);
                     totalNum += Integer.valueOf(numbers.get(i));
 
                     StoreProductAttrValueDO storeProductAttrValue = storeProductAttrValueService
@@ -213,16 +222,28 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
         //计算优惠券价格
         if(StrUtil.isNotBlank(param.getCouponId())){
             CouponUserDO couponUserDO = appCouponUserService.getById(param.getCouponId());
-            if(couponUserDO != null){
-                if(couponUserDO.getLeast().compareTo(sumPrice) > 0) {
-                    throw exception(COUPON_NOT_CONDITION);
-                }
-                couponPrice = couponUserDO.getValue();
-
-                //使用了优惠券扣优惠券
-                couponUserDO.setStatus(ShopCommonEnum.IS_STATUS_1.getValue());
-                appCouponUserService.updateById(couponUserDO);
-
+            if(couponUserDO == null){
+                throw exception(COUPON_NOT_CONDITION);
+            }
+            if (!Integer.valueOf(uid.intValue()).equals(couponUserDO.getUserId())) {
+                throw exception(FORBIDDEN);
+            }
+            ShopAccess.assertCouponBelongs(couponUserDO.getShopId(), shopId);
+            if (ShopCommonEnum.IS_STATUS_1.getValue().equals(couponUserDO.getStatus())) {
+                throw exception(FORBIDDEN);
+            }
+            if(couponUserDO.getLeast().compareTo(sumPrice) > 0) {
+                throw exception(COUPON_NOT_CONDITION);
+            }
+            couponPrice = couponUserDO.getValue();
+            int used = appCouponUserService.getBaseMapper().update(null, Wrappers.<CouponUserDO>lambdaUpdate()
+                    .set(CouponUserDO::getStatus, ShopCommonEnum.IS_STATUS_1.getValue())
+                    .eq(CouponUserDO::getId, couponUserDO.getId())
+                    .eq(CouponUserDO::getUserId, uid.intValue())
+                    .eq(CouponUserDO::getShopId, ShopAccess.shopKey(shopId))
+                    .eq(CouponUserDO::getStatus, ShopCommonEnum.IS_STATUS_0.getValue()));
+            if (used == 0) {
+                throw exception(FORBIDDEN);
             }
         }
 
@@ -238,7 +259,7 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
 
 
         //计算奖励积分
-        BigDecimal gainIntegral = this.getGainIntegral(productIds);
+        BigDecimal gainIntegral = this.getGainIntegral(productIds, shopId);
 
         StoreOrderDO storeOrder = new StoreOrderDO();
         String orderSn = "";
@@ -305,7 +326,7 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
 
 
         // 减库存加销量
-        this.deStockIncSale(productIds,numbers,specs);
+        this.deStockIncSale(productIds,numbers,specs, shopId);
 
 
         //保存购物车商品信息，异步执行
@@ -346,7 +367,11 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
      */
     @Override
     public Map<String, Object> pay(Long uid, AppPayParam param) {
+        long shopId = ShopAccess.requirePositiveShopId(param.getShopId());
         AppStoreOrderQueryVo orderInfo = getOrderInfo(param.getUni(), uid);
+        if (orderInfo != null) {
+            ShopAccess.assertSameShop(orderInfo.getShopId(), shopId);
+        }
         UserBillDO userBillDO =  billService.getOne(new LambdaQueryWrapper<UserBillDO>().eq(UserBillDO::getUid,uid)
                 .eq(UserBillDO::getExtendField,param.getUni()));
 
@@ -558,7 +583,7 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
      * @param specs 商品规格
      */
     @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
-    public void deStockIncSale(List<String> productIds,List<String> numbers,List<String> specs) {
+    public void deStockIncSale(List<String> productIds,List<String> numbers,List<String> specs, Long shopId) {
 
 
         log.info("========减库存增加销量start=========");
@@ -570,7 +595,7 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
                     String newSku = StrUtil.replace(specs.get(i),"|",",");
                     appStoreProductService.decProductStock(Integer.valueOf(numbers.get(i)),
                             Long.valueOf(productIds.get(i)),
-                            newSku, 0L, "");
+                            newSku, 0L, "", shopId);
                 }
             }catch (Exception ex) {
                 log.error("[deStockIncSale][执行异常]", ex);
@@ -592,8 +617,10 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
      * @return list
      */
     @Override
-    public List<AppStoreOrderQueryVo> orderList(Long uid, int type, int page, int limit) {
+    public List<AppStoreOrderQueryVo> orderList(Long uid, Long shopId, int type, int page, int limit) {
+        long scopedShopId = ShopAccess.requirePositiveShopId(shopId);
         LambdaQueryWrapper<StoreOrderDO> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(StoreOrderDO::getShopId, scopedShopId);
         if (uid != null) {
             wrapper.eq(StoreOrderDO::getUid, uid);
         }
@@ -757,11 +784,8 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
      * @param uid     uid
      */
     @Override
-    public void takeOrder(String orderId, Long uid) {
-        AppStoreOrderQueryVo order = this.getOrderInfo(orderId, uid);
-        if (ObjectUtil.isNull(order)) {
-            throw exception(STORE_ORDER_NOT_EXISTS);
-        }
+    public void takeOrder(String orderId, Long uid, Long shopId) {
+        AppStoreOrderQueryVo order = requireCustomerOrder(orderId, uid, shopId);
 
         if (OrderInfoEnum.PAY_STATUS_0.getValue().equals(order.getPaid())) {
             throw exception(ORDER_STATUS_ERROR);
@@ -804,11 +828,8 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
      * @param uid     uid
      */
     @Override
-    public void orderApplyRefund(String explain, String Img, String text, String orderId, Long uid) {
-        AppStoreOrderQueryVo order = this.getOrderInfo(orderId, uid);
-        if (ObjectUtil.isNull(order)) {
-            throw exception(STORE_ORDER_NOT_EXISTS);
-        }
+    public void orderApplyRefund(String explain, String Img, String text, String orderId, Long uid, Long shopId) {
+        AppStoreOrderQueryVo order = requireCustomerOrder(orderId, uid, shopId);
 
         if (OrderInfoEnum.REFUND_STATUS_2.getValue().equals(order.getRefundStatus())) {
             throw exception(ORDER_REFUNDED);
@@ -845,11 +866,8 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
      * @param uid     uid
      */
     @Override
-    public void removeOrder(String orderId, Long uid) {
-        AppStoreOrderQueryVo order = this.getOrderInfo(orderId,  uid);
-        if (order == null) {
-            throw exception(STORE_ORDER_NOT_EXISTS);
-        }
+    public void removeOrder(String orderId, Long uid, Long shopId) {
+        AppStoreOrderQueryVo order = requireCustomerOrder(orderId, uid, shopId);
         order = handleOrder(order);
         if (!OrderInfoEnum.STATUS_3.getValue().equals(order.getStatus())) {
             throw exception(ORDER_NOT_DELETE);
@@ -871,12 +889,9 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
      */
     @Override
     @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
-    public void cancelOrder(String orderId, Long uid) {
+    public void cancelOrder(String orderId, Long uid, Long shopId) {
         log.info("订单取消：({})",orderId);
-        AppStoreOrderQueryVo order = this.getOrderInfo(orderId, uid);
-        if (ObjectUtil.isNull(order)) {
-            throw exception(STORE_ORDER_NOT_EXISTS);
-        }
+        AppStoreOrderQueryVo order = requireCustomerOrder(orderId, uid, shopId);
         if (order.getPaid() != 0) {
             throw exception(ORDER_NOT_CANCEL);
         }
@@ -914,19 +929,13 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
             return;
         }
 
-        MemberUserDO yxUser = userService.getById(order.getUid());
+        BigDecimal newIntegral = shopUserIntegralService.credit(order.getUid(), order.getShopId(), order.getUseIntegral());
 
-        //增加积分
-        BigDecimal newIntegral = NumberUtil.add(order.getUseIntegral(), yxUser.getIntegral());
-        yxUser.setIntegral(newIntegral);
-        userService.updateById(yxUser);
-
-        //增加流水
-        billService.income(yxUser.getId(), "积分回退", BillDetailEnum.CATEGORY_2.getValue(),
+        billService.income(order.getUid(), "积分回退", BillDetailEnum.CATEGORY_2.getValue(),
                 BillDetailEnum.TYPE_8.getValue(),
                 order.getUseIntegral().doubleValue(),
                 newIntegral.doubleValue(),
-                "购买商品失败,回退积分" + order.getUseIntegral(), order.getId().toString());
+                "购买商品失败,回退积分" + order.getUseIntegral(), order.getId().toString(), order.getShopId());
 
         //更新回退积分
         StoreOrderDO storeOrder = new StoreOrderDO();
@@ -952,6 +961,7 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
                     .getOne(Wrappers.<CouponUserDO>lambdaQuery()
                             .eq(CouponUserDO::getId, order.getCouponId())
                             .eq(CouponUserDO::getStatus, ShopCommonEnum.IS_STATUS_1.getValue())
+                            .eq(CouponUserDO::getShopId, ShopAccess.shopKey(order.getShopId()))
                             .eq(CouponUserDO::getUserId, order.getUid()));
 
             if (ObjectUtil.isNotNull(couponUser)) {
@@ -979,7 +989,7 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
         for (StoreOrderCartInfoDO cartInfo : cartInfoList) {
             String newSku = StrUtil.replace(cartInfo.getSpec(),"|",",");
             appStoreProductService.incProductStock(cartInfo.getNumber(), cartInfo.getProductId()
-                    ,newSku, 0L, null);
+                    ,newSku, 0L, null, order.getShopId());
         }
     }
     
@@ -991,20 +1001,23 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
      */
     private void gainUserIntegral(AppStoreOrderQueryVo order) {
         if (order.getGainIntegral().compareTo(BigDecimal.ZERO) > 0) {
-            MemberUserDO user = userService.getUser(order.getUid());
-
-            BigDecimal newIntegral = NumberUtil.add(user.getIntegral(), order.getGainIntegral());
-            user.setIntegral(newIntegral);
-            user.setId(order.getUid());
-            userService.updateById(user);
-
-            //增加流水
-            billService.income(user.getId(), "购买商品赠送积分", BillDetailEnum.CATEGORY_2.getValue(),
+            BigDecimal newIntegral = shopUserIntegralService.credit(order.getUid(), order.getShopId(), order.getGainIntegral());
+            billService.income(order.getUid(), "购买商品赠送积分", BillDetailEnum.CATEGORY_2.getValue(),
                     BillDetailEnum.TYPE_9.getValue(),
                     order.getGainIntegral().doubleValue(),
                     newIntegral.doubleValue(),
-                    "购买商品赠送" + order.getGainIntegral() + "积分", order.getId().toString());
+                    "购买商品赠送" + order.getGainIntegral() + "积分", order.getId().toString(), order.getShopId());
         }
+    }
+
+    private AppStoreOrderQueryVo requireCustomerOrder(String orderId, Long uid, Long shopId) {
+        long scopedShopId = ShopAccess.requirePositiveShopId(shopId);
+        AppStoreOrderQueryVo order = this.getOrderInfo(orderId, uid);
+        if (ObjectUtil.isNull(order)) {
+            throw exception(STORE_ORDER_NOT_EXISTS);
+        }
+        ShopAccess.assertSameShop(order.getShopId(), scopedShopId);
+        return order;
     }
 
 
@@ -1015,10 +1028,16 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
      * @param productIds
      * @return double
      */
-    private BigDecimal getGainIntegral(List<String> productIds) {
+    private BigDecimal getGainIntegral(List<String> productIds, long shopId) {
         BigDecimal gainIntegral = BigDecimal.ZERO;
+        int scopedShopId = ShopAccess.toIntShop(shopId);
         for (int i = 0;i < productIds.size();i++){
-            StoreProductDO storeProductDO = appStoreProductService.getById(productIds.get(i));
+            StoreProductDO storeProductDO = appStoreProductService.getOne(Wrappers.<StoreProductDO>lambdaQuery()
+                    .eq(StoreProductDO::getId, productIds.get(i))
+                    .eq(StoreProductDO::getShopId, scopedShopId));
+            if (storeProductDO == null) {
+                throw exception(FORBIDDEN);
+            }
             if(storeProductDO.getGiveIntegral().intValue() == 0){
                 continue;
             }

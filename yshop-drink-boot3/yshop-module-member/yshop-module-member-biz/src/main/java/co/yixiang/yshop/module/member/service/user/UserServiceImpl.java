@@ -2,7 +2,9 @@ package co.yixiang.yshop.module.member.service.user;
 
 import cn.hutool.core.util.NumberUtil;
 import co.yixiang.yshop.framework.common.enums.ShopCommonEnum;
+import co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils;
 import co.yixiang.yshop.module.member.enums.BillDetailEnum;
+import co.yixiang.yshop.module.member.service.usershopintegral.ShopUserIntegralService;
 import co.yixiang.yshop.module.member.service.userbill.UserBillService;
 import jakarta.annotation.Resource;
 import org.springframework.stereotype.Service;
@@ -18,6 +20,7 @@ import co.yixiang.yshop.framework.common.pojo.PageResult;
 import co.yixiang.yshop.module.member.convert.user.UserConvert;
 import co.yixiang.yshop.module.member.dal.mysql.user.MemberUserMapper;
 
+import static co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.BAD_REQUEST;
 import static co.yixiang.yshop.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static co.yixiang.yshop.module.member.enums.ErrorCodeConstants.*;
 
@@ -34,6 +37,8 @@ public class UserServiceImpl implements UserService {
     private MemberUserMapper userMapper;
     @Resource
     private UserBillService userBillService;
+    @Resource
+    private ShopUserIntegralService shopUserIntegralService;
 
     @Override
     public Long createUser(UserCreateReqVO createReqVO) {
@@ -79,24 +84,25 @@ public class UserServiceImpl implements UserService {
                     BillDetailEnum.TYPE_7.getValue(),
                     Double.valueOf(updateReqVO.getMoney()), newMoney, mark);
         }
-        double newIntegral = 0d;
+        long shopId = ShopSecurityUtils.currentStaffShop(null);
+        BigDecimal integralChange = new BigDecimal(updateReqVO.getIntegral());
+        double newIntegral;
         if(ShopCommonEnum.ADD_1.getValue().equals(updateReqVO.getItype())){
             mark = "系统增加了"+updateReqVO.getIntegral()+"积分";
-            newIntegral = NumberUtil.add(memberUserDO.getIntegral(),new BigDecimal(updateReqVO.getIntegral())).doubleValue();
+            newIntegral = shopUserIntegralService.credit(memberUserDO.getId(), shopId, integralChange).doubleValue();
             userBillService.income(memberUserDO.getId(),"系统增加积分", BillDetailEnum.CATEGORY_2.getValue(),
-                    BillDetailEnum.TYPE_6.getValue(),Double.valueOf(updateReqVO.getIntegral()),newIntegral, mark,"");
+                    BillDetailEnum.TYPE_6.getValue(), integralChange.doubleValue(), newIntegral, mark, "", shopId);
         }else{
             mark = "系统扣除了"+updateReqVO.getIntegral()+"积分";
-            newIntegral = NumberUtil.sub(memberUserDO.getIntegral(),new BigDecimal(updateReqVO.getIntegral())).doubleValue();
-            if(newIntegral < 0) {
-                newIntegral = 0d;
+            if (!shopUserIntegralService.tryDebit(memberUserDO.getId(), shopId, integralChange)) {
+                throw exception(BAD_REQUEST);
             }
+            newIntegral = shopUserIntegralService.balance(memberUserDO.getId(), shopId).doubleValue();
             userBillService.expend(memberUserDO.getId(), "系统减少积分",
                     BillDetailEnum.CATEGORY_2.getValue(),
                     BillDetailEnum.TYPE_7.getValue(),
-                    Double.valueOf(updateReqVO.getIntegral()), newIntegral, mark);
+                    integralChange.doubleValue(), newIntegral, mark, shopId);
         }
-        memberUserDO.setIntegral(BigDecimal.valueOf(newIntegral));
         memberUserDO.setNowMoney(BigDecimal.valueOf(newMoney));
         userMapper.updateById(memberUserDO);
 

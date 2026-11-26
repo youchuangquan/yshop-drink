@@ -2,6 +2,7 @@ package co.yixiang.yshop.module.member.service.userbill;
 
 import co.yixiang.yshop.framework.common.enums.ShopCommonEnum;
 import co.yixiang.yshop.framework.common.pojo.PageResult;
+import co.yixiang.yshop.framework.common.shop.ShopAccess;
 import co.yixiang.yshop.module.member.controller.admin.userbill.vo.UserBillPageReqVO;
 import co.yixiang.yshop.module.member.controller.app.user.vo.AppUserBillVO;
 import co.yixiang.yshop.module.member.convert.userbill.UserBillConvert;
@@ -50,8 +51,14 @@ public class UserBillServiceImpl extends ServiceImpl<UserBillMapper, UserBillDO>
      */
     @Override
     public void expend(Long uid,String title,String category,String type,double number,double balance,String mark){
+        expend(uid, title, category, type, number, balance, mark, null);
+    }
+
+    @Override
+    public void expend(Long uid, String title, String category, String type, double number, double balance, String mark, Long shopId) {
         UserBillDO userBill = UserBillDO.builder()
                 .uid(uid)
+                .shopId(shopId)
                 .title(title)
                 .category(category)
                 .type(type)
@@ -78,27 +85,26 @@ public class UserBillServiceImpl extends ServiceImpl<UserBillMapper, UserBillDO>
     @Override
     public void income(Long uid,String title,String category,String type,double number,
                        double balance,String mark,String linkid){
-        UserBillDO userBill = UserBillDO.builder()
-                .uid(uid)
-                .title(title)
-                .category(category)
-                .type(type)
-                .number(BigDecimal.valueOf(number))
-                .balance(BigDecimal.valueOf(balance))
-                .mark(mark)
-                .pm(BillEnum.PM_1.getValue())
-                .linkId(linkid)
-                .build();
+        income(uid, title, category, type, number, balance, mark, linkid, null, null);
+    }
 
-        userBillMapper.insert(userBill);
+    @Override
+    public void income(Long uid, String title, String category, String type, double number, double balance,
+                       String mark, String linkid, Long shopId) {
+        income(uid, title, category, type, number, balance, mark, linkid, null, shopId);
     }
 
     @Override
     public void income(Long uid, String title, String category, String type, double number, double balance,
                        String mark, String linkid, String extendField) {
+        income(uid, title, category, type, number, balance, mark, linkid, extendField, null);
+    }
 
+    private void income(Long uid, String title, String category, String type, double number, double balance,
+                        String mark, String linkid, String extendField, Long shopId) {
         UserBillDO userBill = UserBillDO.builder()
                 .uid(uid)
+                .shopId(shopId)
                 .title(title)
                 .category(category)
                 .type(type)
@@ -110,9 +116,7 @@ public class UserBillServiceImpl extends ServiceImpl<UserBillMapper, UserBillDO>
                 .extendField(extendField)
                 .status(ShopCommonEnum.IS_STATUS_1.getValue())
                 .build();
-
         userBillMapper.insert(userBill);
-
     }
 
     /**
@@ -126,9 +130,16 @@ public class UserBillServiceImpl extends ServiceImpl<UserBillMapper, UserBillDO>
      */
     @Override
     public List<AppUserBillVO> getBillList(Long uid,int cate, int type, int page, int limit) {
+        return getBillList(uid, cate, type, page, limit, null);
+    }
+
+    @Override
+    public List<AppUserBillVO> getBillList(Long uid, int cate, int type, int page, int limit, Long shopId) {
         LambdaQueryWrapper<UserBillDO> wrapper = new LambdaQueryWrapper<>();
         if(cate == 1){
-            wrapper.eq(UserBillDO::getCategory,BillDetailEnum.CATEGORY_2.getValue());
+            long shop = ShopAccess.requirePositiveShopId(shopId);
+            wrapper.eq(UserBillDO::getCategory,BillDetailEnum.CATEGORY_2.getValue())
+                    .eq(UserBillDO::getShopId, shop);
         }else{
             wrapper.eq(UserBillDO::getCategory,BillDetailEnum.CATEGORY_1.getValue());
         }

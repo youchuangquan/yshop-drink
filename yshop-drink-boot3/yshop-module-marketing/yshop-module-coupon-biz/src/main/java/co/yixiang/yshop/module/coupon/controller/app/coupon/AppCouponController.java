@@ -59,9 +59,11 @@ public class AppCouponController {
                                                       @RequestParam("type") Integer type) {
         Long uid = getLoginUserId();
         LocalDateTime nowTime = LocalDateTime.now();
+        String scopedShopId = co.yixiang.yshop.framework.common.shop.ShopAccess.shopKey(
+                co.yixiang.yshop.framework.common.shop.ShopAccess.requirePositiveShopId(shopId));
         Long count = appCouponUserService.count(new LambdaQueryWrapper<CouponUserDO>()
                 .eq(CouponUserDO::getUserId,uid)
-                .eq(CouponUserDO::getShopId,shopId)
+                .eq(CouponUserDO::getShopId, scopedShopId)
                 .lt(CouponUserDO::getStartTime,nowTime)
                 .gt(CouponUserDO::getEndTime,nowTime)
                 .and(i->i.eq(CouponUserDO::getType,type).or().eq(CouponUserDO::getType,0))
@@ -129,7 +131,7 @@ public class AppCouponController {
     @Operation(summary = "获取未被领取优惠券")
     public CommonResult<Boolean> receive(@RequestBody AppReceVO appReceVO){
         Long uid = getLoginUserId();
-        appCouponService.receive(uid,appReceVO.getId(),appReceVO.getCode());
+        appCouponService.receive(uid,appReceVO.getId(),appReceVO.getCode(), appReceVO.getShopId());
         return success(true);
     }
 

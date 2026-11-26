@@ -30,6 +30,9 @@ public class AppScoreOrderParam {
     @Schema(description = "数量", required = true)
     private String num;
 
+    @Schema(description = "门店ID", required = true)
+    private String shopId;
+
 
 
 }

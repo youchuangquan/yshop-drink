@@ -33,6 +33,11 @@ public class ScoreOrderDO extends BaseDO {
     private Long uid;
 
     /**
+     * 门店 id
+     */
+    private Long shopId;
+
+    /**
      * 订单编号
      */
     private String orderId;

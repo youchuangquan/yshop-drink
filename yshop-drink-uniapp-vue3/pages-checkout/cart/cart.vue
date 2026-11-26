@@ -51,6 +51,7 @@ import {
 import { useMainStore } from '@/store/store'
 import { storeToRefs } from 'pinia'
 import { onLoad,onShow} from '@dcloudio/uni-app'
+import { cartKey } from '@/utils/shopSession'
 const main = useMainStore()
 const { orderType,address, store,location,isLogin } = storeToRefs(main)
 const title = ref('购物车')
@@ -61,8 +62,7 @@ const uToast = ref()
 // 	cart.value = uni.getStorageSync('cart')
 // })
 onShow(() => {
-	//cart.value = []
-	cart.value = uni.getStorageSync('cart')
+	cart.value = store.value.id ? (uni.getStorageSync(cartKey(store.value.id)) || []) : []
 })
 const getCartGoodsNumber = computed(() => { //计算购物车总数
 	if(cart.value.length == 0) {
@@ -85,7 +85,7 @@ const customStyle = computed(() =>{
 })
 const handleCartItemAdd = (index) => {
 	cart.value[index].number += 1
-	uni.setStorageSync('cart', JSON.parse(JSON.stringify(cart.value)))
+	if (store.value.id) { uni.setStorageSync(cartKey(store.value.id), JSON.parse(JSON.stringify(cart.value))); uni.removeStorageSync('cart') }
 }
 const handleCartItemReduce = (index) => {
 	if (cart.value[index].number === 1) {
@@ -96,7 +96,7 @@ const handleCartItemReduce = (index) => {
 	if (!cart.value.length) {
 		cartPopupVisible.value = false
 	}
-	uni.setStorageSync('cart', JSON.parse(JSON.stringify(cart.value)))
+	if (store.value.id) { uni.setStorageSync(cartKey(store.value.id), JSON.parse(JSON.stringify(cart.value))); uni.removeStorageSync('cart') }
 }
 const handleCartClear = () => { //清空购物车
 	uni.showModal({
@@ -107,7 +107,7 @@ const handleCartClear = () => { //清空购物车
 		}) => {
 			if (confirm) {
 				cart.value = []
-				uni.setStorageSync('cart', JSON.parse(JSON.stringify(cart.value)))
+				if (store.value.id) { uni.setStorageSync(cartKey(store.value.id), JSON.parse(JSON.stringify(cart.value))); uni.removeStorageSync('cart') }
 			}
 		}
 	})
@@ -138,7 +138,7 @@ const toPay = () => {
 		uni.showLoading({
 			title: '加载中'
 		})
-		uni.setStorageSync('cart', JSON.parse(JSON.stringify(cart.value)))
+		if (store.value.id) { uni.setStorageSync(cartKey(store.value.id), JSON.parse(JSON.stringify(cart.value))); uni.removeStorageSync('cart') }
 
 		uni.navigateTo({
 			url: '/pages-checkout/pay/pay'

@@ -9,7 +9,8 @@ import co.yixiang.yshop.framework.common.enums.PayIdEnum;
 import co.yixiang.yshop.framework.common.enums.ShopCommonEnum;
 import co.yixiang.yshop.framework.common.exception.ErrorCode;
 import co.yixiang.yshop.framework.common.pojo.PageResult;
-import co.yixiang.yshop.framework.security.core.util.SecurityFrameworkUtils;
+import co.yixiang.yshop.framework.common.shop.ShopAccess;
+import co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils;
 import co.yixiang.yshop.framework.tenant.core.context.TenantContextHolder;
 import co.yixiang.yshop.module.member.controller.admin.user.vo.UserRespVO;
 import co.yixiang.yshop.module.member.convert.user.UserConvert;
@@ -53,6 +54,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
+import static co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.FORBIDDEN;
 import static co.yixiang.yshop.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static co.yixiang.yshop.module.member.enums.ErrorCodeConstants.USER_NOT_EXISTS;
 import static co.yixiang.yshop.module.order.enums.ErrorCodeConstants.*;
@@ -102,6 +104,7 @@ public class StoreOrderServiceImpl implements StoreOrderService {
     public Long createStoreOrder(StoreOrderCreateReqVO createReqVO) {
         // 插入
         StoreOrderDO storeOrder = StoreOrderConvert.INSTANCE.convert(createReqVO);
+        storeOrder.setShopId(ShopSecurityUtils.currentStaffShop(storeOrder.getShopId()));
         storeOrderMapper.insert(storeOrder);
         // 返回
         return storeOrder.getId();
@@ -112,10 +115,8 @@ public class StoreOrderServiceImpl implements StoreOrderService {
         // 校验存在
         // 更新
         StoreOrderDO updateObj = StoreOrderConvert.INSTANCE.convert(updateReqVO);
-        StoreOrderDO updateObj2 = storeOrderMapper.selectById(updateReqVO.getId());
-        if (updateObj2 == null) {
-            throw exception(STORE_ORDER_NOT_EXISTS);
-        }
+        StoreOrderDO updateObj2 = requireStaffOrder(updateReqVO.getId());
+        updateObj.setShopId(updateObj2.getShopId());
 
         //发货自取模式 直接收货
         if(UpdateOrderEnum.ORDER_SEND.getValue().equals(updateReqVO.getUpdateType())
@@ -177,8 +178,7 @@ public class StoreOrderServiceImpl implements StoreOrderService {
 
     @Override
     public void deleteStoreOrder(Long id) {
-        // 校验存在
-        validateStoreOrderExists(id);
+        requireStaffOrder(id);
         // 删除
         StoreOrderDO storeOrderDO = StoreOrderDO.builder()
                 .isSystemDel(ShopCommonEnum.DELETE_1.getValue())
@@ -189,29 +189,30 @@ public class StoreOrderServiceImpl implements StoreOrderService {
 
     @Override
     public void payStoreOrder(Long id) {
-        // 校验存在
-        validateStoreOrderExists(id);
-        StoreOrderDO storeOrderDO = storeOrderMapper.selectById(id);
+        StoreOrderDO storeOrderDO = requireStaffOrder(id);
         //下线支付
         appStoreOrderService.paySuccess(storeOrderDO.getOrderId(),PayTypeEnum.CASH.getValue());
     }
 
     @Override
     public void takeStoreOrder(Long id) {
-        StoreOrderDO storeOrderDO = storeOrderMapper.selectById(id);
-        appStoreOrderService.takeOrder(storeOrderDO.getOrderId(),storeOrderDO.getUid());
+        StoreOrderDO storeOrderDO = requireStaffOrder(id);
+        appStoreOrderService.takeOrder(storeOrderDO.getOrderId(),storeOrderDO.getUid(), storeOrderDO.getShopId());
     }
 
 
-    private void validateStoreOrderExists(Long id) {
-        if (storeOrderMapper.selectById(id) == null) {
+    private StoreOrderDO requireStaffOrder(Long id) {
+        StoreOrderDO order = storeOrderMapper.selectById(id);
+        if (order == null) {
             throw exception(STORE_ORDER_NOT_EXISTS);
         }
+        ShopAccess.assertSameShop(order.getShopId(), ShopSecurityUtils.currentStaffShop(null));
+        return order;
     }
 
     @Override
     public StoreOrderRespVO getStoreOrder(Long id) {
-        StoreOrderDO storeOrderDO = storeOrderMapper.selectById(id);
+        StoreOrderDO storeOrderDO = requireStaffOrder(id);
         StoreOrderRespVO storeOrderRespVO = StoreOrderConvert.INSTANCE.convert(storeOrderDO);
         MemberUserDO memberUserDO = memberUserMapper.selectById(storeOrderRespVO.getUid());
         UserRespVO  userRespVO = UserConvert.INSTANCE.convert4(memberUserDO);
@@ -229,7 +230,20 @@ public class StoreOrderServiceImpl implements StoreOrderService {
 
     @Override
     public List<StoreOrderDO> getStoreOrderList(Collection<Long> ids) {
-        return storeOrderMapper.selectBatchIds(ids);
+        if (ids == null || ids.isEmpty()) {
+            return java.util.Collections.emptyList();
+        }
+        long shopId = ShopSecurityUtils.currentStaffShop(null);
+        List<StoreOrderDO> rows = storeOrderMapper.selectList(new LambdaQueryWrapper<StoreOrderDO>()
+                .in(StoreOrderDO::getId, ids)
+                .eq(StoreOrderDO::getShopId, shopId));
+        Long otherShop = storeOrderMapper.selectCount(new LambdaQueryWrapper<StoreOrderDO>()
+                .in(StoreOrderDO::getId, ids)
+                .ne(StoreOrderDO::getShopId, shopId));
+        if (otherShop != null && otherShop > 0) {
+            throw exception(FORBIDDEN);
+        }
+        return rows;
     }
 
     /**
@@ -272,10 +286,7 @@ public class StoreOrderServiceImpl implements StoreOrderService {
     @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
     public void orderRefund(Long id, BigDecimal price, Integer type, Long salesId) {
 
-        StoreOrderDO storeOrderDO = storeOrderMapper.selectById(id);
-        if (storeOrderDO == null) {
-            throw exception(STORE_ORDER_NOT_EXISTS);
-        }
+        StoreOrderDO storeOrderDO = requireStaffOrder(id);
 
         MemberUserDO userQueryVo = userService.getById(storeOrderDO.getUid());
         if (ObjectUtil.isNull(userQueryVo)) {
@@ -356,10 +367,7 @@ public class StoreOrderServiceImpl implements StoreOrderService {
     @Override
     public Long orderNotice() {
         LambdaQueryWrapper<StoreOrderDO> wrapper = new LambdaQueryWrapper();
-        Long shopId = SecurityFrameworkUtils.getLoginUser().getShopId();
-        if(shopId > 0) {
-            wrapper.eq(StoreOrderDO::getShopId,shopId);
-        }
+        wrapper.eq(StoreOrderDO::getShopId, ShopSecurityUtils.currentStaffShop(null));
         wrapper.eq(StoreOrderDO::getPaid, OrderInfoEnum.PAY_STATUS_1.getValue());
         LocalDateTime nowTime = LocalDateTime.now();
         wrapper.ge(StoreOrderDO::getCreateTime,nowTime.minusSeconds(30));
@@ -381,7 +389,7 @@ public class StoreOrderServiceImpl implements StoreOrderService {
         List<StoreOrderCartInfoDO> cartInfoList = storeOrderCartInfoMapper.selectList(wrapper);
         for (StoreOrderCartInfoDO cartInfo : cartInfoList) {
             appStoreProductService.incProductStock(cartInfo.getNumber(), cartInfo.getProductId(), cartInfo.getSpec(),
-                    0L, null);
+                    0L, null, order.getShopId());
         }
     }
 

@@ -27,4 +27,7 @@ public class AppRefundParam implements Serializable {
     @NotBlank(message = "参数错误")
     @Schema(description = "订单号", required = true)
     private String uni;
+
+    @Schema(description = "门店ID", required = true)
+    private String shopId;
 }

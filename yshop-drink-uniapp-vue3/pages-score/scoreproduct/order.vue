@@ -76,7 +76,7 @@ import {
 } from '@/api/score'
 const main = useMainStore()
 const { proxy } = getCurrentInstance();
-const { isLogin } = storeToRefs(main)
+const { isLogin, store } = storeToRefs(main)
 const title = ref('我的积分订单')
 
 const type = ref(-1)
@@ -130,7 +130,8 @@ const  getOrders = async(isRefresh = false) => {
 	let data = await scoreShopOrder({
 		page: page.value,
 		pagesize: pageSize.value,
-		type: type.value
+		type: type.value,
+		shopId: store.value.id
 	});
 	if (data.length > 0) {
 		orders.value = orders.value.concat(data)
@@ -147,7 +148,8 @@ const detail = (id) => {
 // 确认收到货
 const  receive = async(order) => {
 	let data = await scoreShopReceive({
-		id: order.id
+		id: order.id,
+		shopId: store.value.id
 	});
 	if (data) {
 		proxy.$refs.uToast.show({

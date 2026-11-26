@@ -3,6 +3,7 @@ package co.yixiang.yshop.module.score.dal.mysql.scoreproduct;
 import java.util.*;
 
 import co.yixiang.yshop.framework.common.pojo.PageResult;
+import co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils;
 import co.yixiang.yshop.framework.mybatis.core.query.LambdaQueryWrapperX;
 import co.yixiang.yshop.framework.mybatis.core.mapper.BaseMapperX;
 import co.yixiang.yshop.module.score.dal.dataobject.scoreproduct.ScoreProductDO;
@@ -20,7 +21,9 @@ import org.apache.ibatis.annotations.Update;
 public interface ScoreProductMapper extends BaseMapperX<ScoreProductDO> {
 
     default PageResult<ScoreProductDO> selectPage(ScoreProductPageReqVO reqVO) {
+        long shopId = ShopSecurityUtils.currentStaffShop(null);
         return selectPage(reqVO, new LambdaQueryWrapperX<ScoreProductDO>()
+                .eq(ScoreProductDO::getShopId, shopId)
                 .eqIfPresent(ScoreProductDO::getTitle, reqVO.getTitle())
                 .eqIfPresent(ScoreProductDO::getImage, reqVO.getImage())
                 .eqIfPresent(ScoreProductDO::getImages, reqVO.getImages())
@@ -34,7 +37,9 @@ public interface ScoreProductMapper extends BaseMapperX<ScoreProductDO> {
     }
 
     default List<ScoreProductDO> selectList(ScoreProductExportReqVO reqVO) {
+        long shopId = ShopSecurityUtils.currentStaffShop(null);
         return selectList(new LambdaQueryWrapperX<ScoreProductDO>()
+                .eq(ScoreProductDO::getShopId, shopId)
                 .eqIfPresent(ScoreProductDO::getTitle, reqVO.getTitle())
                 .eqIfPresent(ScoreProductDO::getImage, reqVO.getImage())
                 .eqIfPresent(ScoreProductDO::getImages, reqVO.getImages())
@@ -55,7 +60,7 @@ public interface ScoreProductMapper extends BaseMapperX<ScoreProductDO> {
      * @return
      */
     @Update("update yshop_score_product set stock=stock-#{num}, sales=sales+#{num}" +
-            " where id=#{productId} and stock >= #{num}")
-    int decStockIncSales(@Param("num") Integer num, @Param("productId") Long productId);
+            " where id=#{productId} and shop_id=#{shopId} and stock >= #{num}")
+    int decStockIncSales(@Param("num") Integer num, @Param("productId") Long productId, @Param("shopId") Long shopId);
 
 }

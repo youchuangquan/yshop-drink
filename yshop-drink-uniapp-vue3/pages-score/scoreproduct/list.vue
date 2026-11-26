@@ -47,9 +47,13 @@ import {
   getCurrentInstance
 } from 'vue'
 import { onReachBottom,onShow,onPullDownRefresh} from '@dcloudio/uni-app'
+import { useMainStore } from '@/store/store'
+import { storeToRefs } from 'pinia'
 import {
   scoreShopIndex
 } from '@/api/score'
+const main = useMainStore()
+const { store } = storeToRefs(main)
 const { proxy } = getCurrentInstance();
 
 const title = ref('积分商品')
@@ -76,7 +80,8 @@ onReachBottom(async() => {
 	status.value = 'loading'; 
 	let data = await scoreShopIndex({
 		page: page.value,
-		pagesize: pagesize.value
+		pagesize: pagesize.value,
+		shopId: store.value.id
 	});
 	if (data) {
 		list.value = list.value.concat(data);
@@ -118,7 +123,8 @@ const  getProduct = async() => {
 
 	let data = await scoreShopIndex({
 		page: page.value,
-		pagesize: pagesize.value
+		pagesize: pagesize.value,
+		shopId: store.value.id
 	});
 	console.log('data:',data)
 	uni.stopPullDownRefresh();

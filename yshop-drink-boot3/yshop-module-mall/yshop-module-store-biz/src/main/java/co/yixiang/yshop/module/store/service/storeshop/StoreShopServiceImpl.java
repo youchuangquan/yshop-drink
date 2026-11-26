@@ -3,6 +3,8 @@ package co.yixiang.yshop.module.store.service.storeshop;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.date.DateUtil;
 import co.yixiang.yshop.framework.common.exception.ErrorCode;
+import co.yixiang.yshop.framework.common.shop.ShopAccess;
+import co.yixiang.yshop.framework.security.core.LoginUser;
 import co.yixiang.yshop.framework.security.core.util.SecurityFrameworkUtils;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.springframework.stereotype.Service;
@@ -17,6 +19,7 @@ import co.yixiang.yshop.framework.common.pojo.PageResult;
 import co.yixiang.yshop.module.store.convert.storeshop.StoreShopConvert;
 import co.yixiang.yshop.module.store.dal.mysql.storeshop.StoreShopMapper;
 
+import static co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.FORBIDDEN;
 import static co.yixiang.yshop.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static co.yixiang.yshop.module.store.enums.ErrorCodeConstants.*;
 
@@ -34,6 +37,7 @@ public class StoreShopServiceImpl implements StoreShopService {
 
     @Override
     public Long createShop(StoreShopCreateReqVO createReqVO) {
+        rejectIfBoundToAnotherShop(null);
         //管理员只能绑定一个门店
         createReqVO.getAdminId().forEach(val -> {
            Long count = shopMapper.selectCount(new LambdaQueryWrapper<StoreShopDO>()
@@ -54,7 +58,7 @@ public class StoreShopServiceImpl implements StoreShopService {
 
     @Override
     public void updateShop(StoreShopUpdateReqVO updateReqVO) {
-
+        assertOwnShop(updateReqVO.getId());
         //管理员只能绑定一个门店
         updateReqVO.getAdminId().forEach(val -> {
             Long count = shopMapper.selectCount(new LambdaQueryWrapper<StoreShopDO>()
@@ -104,7 +108,7 @@ public class StoreShopServiceImpl implements StoreShopService {
 
     @Override
     public void deleteShop(Long id) {
-        // 校验存在
+        assertOwnShop(id);
         validateShopExists(id);
         // 删除
         shopMapper.deleteById(id);
@@ -118,7 +122,26 @@ public class StoreShopServiceImpl implements StoreShopService {
 
     @Override
     public StoreShopDO getShop(Long id) {
-        return shopMapper.selectById(id);
+        StoreShopDO shop = shopMapper.selectById(id);
+        if (shop != null) {
+            assertOwnShop(shop.getId());
+        }
+        return shop;
+    }
+
+    private void assertOwnShop(Long shopId) {
+        LoginUser user = SecurityFrameworkUtils.getLoginUser();
+        if (user == null || user.getShopId() == null || user.getShopId() <= 0) {
+            return;
+        }
+        ShopAccess.assertSameShop(shopId, user.getShopId());
+    }
+
+    private void rejectIfBoundToAnotherShop(Long shopId) {
+        LoginUser user = SecurityFrameworkUtils.getLoginUser();
+        if (user != null && user.getShopId() != null && user.getShopId() > 0) {
+            throw exception(FORBIDDEN);
+        }
     }
 
     @Override

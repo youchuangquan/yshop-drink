@@ -70,7 +70,7 @@ public interface AppStoreOrderService extends IService<StoreOrderDO> {
      * @param limit limit
      * @return list
      */
-    List<AppStoreOrderQueryVo> orderList(Long uid, int type, int page, int limit);
+    List<AppStoreOrderQueryVo> orderList(Long uid, Long shopId, int type, int page, int limit);
 
     /**
      * 处理订单返回的状态
@@ -84,7 +84,7 @@ public interface AppStoreOrderService extends IService<StoreOrderDO> {
      * @param orderId 单号
      * @param uid uid
      */
-    void takeOrder(String orderId,Long uid);
+    void takeOrder(String orderId,Long uid, Long shopId);
 
     /**
      * 申请退款
@@ -94,21 +94,21 @@ public interface AppStoreOrderService extends IService<StoreOrderDO> {
      * @param orderId 订单号
      * @param uid uid
      */
-    void orderApplyRefund(String explain,String Img,String text,String orderId, Long uid);
+    void orderApplyRefund(String explain,String Img,String text,String orderId, Long uid, Long shopId);
 
     /**
      * 删除订单
      * @param orderId 单号
      * @param uid uid
      */
-    void removeOrder(String orderId,Long uid);
+    void removeOrder(String orderId,Long uid, Long shopId);
 
     /**
      * 未付款取消订单
      * @param orderId 订单号
      * @param uid 用户id
      */
-    void cancelOrder(String orderId,Long uid);
+    void cancelOrder(String orderId,Long uid, Long shopId);
 
 
 

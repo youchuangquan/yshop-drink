@@ -79,7 +79,7 @@ import {
   orderReceive
 } from '@/api/order'
 const main = useMainStore()
-const { isLogin } = storeToRefs(main)
+const { isLogin, store } = storeToRefs(main)
 const title = ref('我的订单')
 
 const page = ref(1)
@@ -141,7 +141,7 @@ const getOrders = async(isRefresh = false) => {
 		orders.value = []
 		page.value = 1
 	}
-	let ordersData = await orderGetOrders({page:page.value, limit:pageSize.value,type:type.value});
+	let ordersData = await orderGetOrders({page:page.value, limit:pageSize.value,type:type.value, shopId: store.value.id});
 
 	if(ordersData) {
 		orders.value = orders.value.concat(ordersData)
@@ -157,7 +157,7 @@ const detail = (id) => {
 }
 // 确认收到货
 const receive  = async(order) => {
-	let data = await orderReceive({uni:order.orderId});
+	let data = await orderReceive({uni:order.orderId, shopId: store.value.id});
 	if (data) {
 		await getOrders(true)
 	}

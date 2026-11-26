@@ -40,7 +40,10 @@ public class CouponServiceImpl implements CouponService {
     public Long create(CouponCreateReqVO createReqVO) {
         // 插入
         CouponDO  couponDO = CouponConvert.INSTANCE.convert(createReqVO);
-        StoreShopDO storeShopDO = storeShopMapper.selectById(createReqVO.getShopId());
+        String shopId = co.yixiang.yshop.framework.common.shop.ShopAccess.shopKey(
+                co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(createReqVO.getShopId()));
+        couponDO.setShopId(shopId);
+        StoreShopDO storeShopDO = storeShopMapper.selectById(shopId);
         couponDO.setShopName(storeShopDO.getName());
         Mapper.insert(couponDO);
         // 返回
@@ -50,10 +53,16 @@ public class CouponServiceImpl implements CouponService {
     @Override
     public void update(CouponUpdateReqVO updateReqVO) {
         // 校验存在
-        validateExists(updateReqVO.getId());
-        // 更新
+        CouponDO exists = Mapper.selectById(updateReqVO.getId());
+        if (exists == null) {
+            throw exception(COUPON_NOT_EXISTS);
+        }
+        String shopId = co.yixiang.yshop.framework.common.shop.ShopAccess.shopKey(
+                co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(updateReqVO.getShopId()));
+        co.yixiang.yshop.framework.common.shop.ShopAccess.assertCouponBelongs(exists.getShopId(), Long.parseLong(shopId));
         CouponDO updateObj = CouponConvert.INSTANCE.convert(updateReqVO);
-        StoreShopDO storeShopDO = storeShopMapper.selectById(updateReqVO.getShopId());
+        updateObj.setShopId(shopId);
+        StoreShopDO storeShopDO = storeShopMapper.selectById(shopId);
         updateObj.setShopName(storeShopDO.getName());
         Mapper.updateById(updateObj);
     }
@@ -79,7 +88,9 @@ public class CouponServiceImpl implements CouponService {
 
     @Override
     public List<CouponDO> getList() {
-        return Mapper.selectList(new LambdaQueryWrapper<CouponDO>().eq(CouponDO::getShopId,0));
+        String shopId = co.yixiang.yshop.framework.common.shop.ShopAccess.shopKey(
+                co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(null));
+        return Mapper.selectList(new LambdaQueryWrapper<CouponDO>().eq(CouponDO::getShopId, shopId));
     }
 
     @Override

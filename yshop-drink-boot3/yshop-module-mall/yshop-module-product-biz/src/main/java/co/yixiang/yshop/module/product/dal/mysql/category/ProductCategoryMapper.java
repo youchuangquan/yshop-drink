@@ -2,7 +2,8 @@ package co.yixiang.yshop.module.product.dal.mysql.category;
 
 import co.yixiang.yshop.framework.mybatis.core.mapper.BaseMapperX;
 import co.yixiang.yshop.framework.mybatis.core.query.LambdaQueryWrapperX;
-import co.yixiang.yshop.framework.security.core.util.SecurityFrameworkUtils;
+import co.yixiang.yshop.framework.common.shop.ShopAccess;
+import co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils;
 import co.yixiang.yshop.module.product.controller.admin.category.vo.ProductCategoryListReqVO;
 import co.yixiang.yshop.module.product.dal.dataobject.category.ProductCategoryDO;
 import org.apache.ibatis.annotations.Mapper;
@@ -18,16 +19,11 @@ import java.util.List;
 public interface ProductCategoryMapper extends BaseMapperX<ProductCategoryDO> {
 
     default List<ProductCategoryDO> selectList(ProductCategoryListReqVO listReqVO) {
-        Long shopId = SecurityFrameworkUtils.getLoginUser().getShopId();
-        if(shopId == 0) {
-            listReqVO.setShopId(null);
-        }else {
-            listReqVO.setShopId(shopId.intValue());
-        }
+        long shopId = ShopSecurityUtils.currentStaffShop(listReqVO.getShopId());
         return selectList(new LambdaQueryWrapperX<ProductCategoryDO>()
                 .likeIfPresent(ProductCategoryDO::getName, listReqVO.getName())
                 .likeIfPresent(ProductCategoryDO::getShopName, listReqVO.getShopName())
-                .eqIfPresent(ProductCategoryDO::getShopId,listReqVO.getShopId())
+                .eq(ProductCategoryDO::getShopId, ShopAccess.toIntShop(shopId))
                 .orderByDesc(ProductCategoryDO::getId));
     }
 
@@ -36,9 +32,10 @@ public interface ProductCategoryMapper extends BaseMapperX<ProductCategoryDO> {
     }
 
     default List<ProductCategoryDO> selectListByStatus(Integer status,Integer shopId) {
+        int scopedShopId = ShopAccess.toIntShop(shopId == null ? 0 : shopId);
         return selectList(new LambdaQueryWrapperX<ProductCategoryDO>()
                 .eqIfPresent(ProductCategoryDO::getStatus, status)
-                .eqIfPresent(ProductCategoryDO::getShopId, shopId)
+                .eq(ProductCategoryDO::getShopId, scopedShopId)
                 .orderByDesc(ProductCategoryDO::getId));
     }
 

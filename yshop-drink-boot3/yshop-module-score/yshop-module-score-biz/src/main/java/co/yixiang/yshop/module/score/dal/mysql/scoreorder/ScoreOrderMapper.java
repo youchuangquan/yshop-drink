@@ -3,6 +3,7 @@ package co.yixiang.yshop.module.score.dal.mysql.scoreorder;
 import java.util.*;
 
 import co.yixiang.yshop.framework.common.enums.OrderInfoEnum;
+import co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils;
 import co.yixiang.yshop.framework.common.pojo.PageResult;
 import co.yixiang.yshop.framework.mybatis.core.query.LambdaQueryWrapperX;
 import co.yixiang.yshop.framework.mybatis.core.mapper.BaseMapperX;
@@ -23,7 +24,8 @@ public interface ScoreOrderMapper extends BaseMapperX<ScoreOrderDO> {
 
     default PageResult<ScoreOrderDO> selectPage(ScoreOrderPageReqVO reqVO) {
         LambdaQueryWrapperX<ScoreOrderDO> wrapper = new LambdaQueryWrapperX();
-        wrapper.eqIfPresent(ScoreOrderDO::getOrderId, reqVO.getOrderId())
+        wrapper.eq(ScoreOrderDO::getShopId, ShopSecurityUtils.currentStaffShop(null))
+                .eqIfPresent(ScoreOrderDO::getOrderId, reqVO.getOrderId())
                 .likeIfPresent(ScoreOrderDO::getCustomerName, reqVO.getCustomerName())
                 .eqIfPresent(ScoreOrderDO::getCustomerPhone, reqVO.getCustomerPhone())
                 .orderByDesc(ScoreOrderDO::getId);

@@ -22,5 +22,10 @@ public class AppReceVO {
      */
     private String code;
 
+    /**
+     * 领取时所在门店
+     */
+    private Long shopId;
+
 
 }

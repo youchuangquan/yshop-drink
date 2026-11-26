@@ -139,7 +139,7 @@ import {
   couponIndexApi
 } from '@/api/coupon'
 const main = useMainStore()
-const { isLogin } = storeToRefs(main)
+const { isLogin, store } = storeToRefs(main)
 const title = ref('优惠券')
 
 const tabs = ref([
@@ -178,7 +178,7 @@ watch(activeTabIndex, () => {
 
 // 兑换
 const exchange = async() => {
-	let data = await couponReceive({code:exchange_code.value});
+	let data = await couponReceive({code:exchange_code.value, shopId: store.value.id});
 	if (data) {
 		uToast.value.show({
 			message: '兑换成功',
@@ -214,11 +214,11 @@ const getCoupons = async(type) => {
 	// 我的优惠券
 	let data = [];
 	if (type == 0) {
-		myCoupons.value = await couponMine({page:page,pagesize:pagesize});
+		myCoupons.value = await couponMine({page:page,pagesize:pagesize, shopId: store.value.id});
 	}
 	// 未领优惠券
 	if (type == 1) {
-		notCoupons.value = await couponIndexApi({page:page,pagesize:pagesize});
+		notCoupons.value = await couponIndexApi({page:page,pagesize:pagesize, id: store.value.id});
 	}
 	//console.log('data:',data)
 	uni.stopPullDownRefresh();
@@ -258,7 +258,7 @@ const showTip2 = () => {
 }
 // 领取优惠券
 const receive = async(coupon,index) => {
-	let data = await couponReceive({id:coupon.id});
+	let data = await couponReceive({id:coupon.id, shopId: store.value.id});
 	if (data) {
 		uToast.value.show({
 			message: '领取成功',

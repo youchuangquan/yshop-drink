@@ -44,7 +44,10 @@ public class ProductCategoryServiceImpl extends ServiceImpl<ProductCategoryMappe
 
         // 插入
         ProductCategoryDO category = ProductCategoryConvert.INSTANCE.convert(createReqVO);
-        StoreShopDO storeShopDO = storeShopMapper.selectById(createReqVO.getShopId());
+        int shopId = co.yixiang.yshop.framework.common.shop.ShopAccess.toIntShop(
+                co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(createReqVO.getShopId()));
+        category.setShopId(shopId);
+        StoreShopDO storeShopDO = storeShopMapper.selectById(shopId);
         category.setShopName(storeShopDO.getName());
         productCategoryMapper.insert(category);
         // 返回
@@ -54,7 +57,15 @@ public class ProductCategoryServiceImpl extends ServiceImpl<ProductCategoryMappe
     @Override
     public void updateCategory(ProductCategoryUpdateReqVO updateReqVO) {
         // 校验分类是否存在
-        validateProductCategoryExists(updateReqVO.getId());
+        ProductCategoryDO exists = productCategoryMapper.selectById(updateReqVO.getId());
+        if (exists == null) {
+            throw exception(CATEGORY_NOT_EXISTS);
+        }
+        int shopId = co.yixiang.yshop.framework.common.shop.ShopAccess.toIntShop(
+                co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(updateReqVO.getShopId()));
+        co.yixiang.yshop.framework.common.shop.ShopAccess.assertSameShop(
+                exists.getShopId() == null ? null : exists.getShopId().longValue(), shopId);
+        updateReqVO.setShopId(shopId);
         // 校验父分类存在
        //validateParentProductCategory(updateReqVO.getParentId());
 
@@ -67,8 +78,13 @@ public class ProductCategoryServiceImpl extends ServiceImpl<ProductCategoryMappe
 
     @Override
     public void deleteCategory(Long id) {
-        // 校验分类是否存在
-        validateProductCategoryExists(id);
+        ProductCategoryDO category = productCategoryMapper.selectById(id);
+        if (category == null) {
+            throw exception(CATEGORY_NOT_EXISTS);
+        }
+        co.yixiang.yshop.framework.common.shop.ShopAccess.assertSameShop(
+                category.getShopId() == null ? null : category.getShopId().longValue(),
+                co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(null));
         // 校验是否还有子分类
         if (productCategoryMapper.selectCountByParentId(id) > 0) {
             throw exception(CATEGORY_EXISTS_CHILDREN);
@@ -106,7 +122,14 @@ public class ProductCategoryServiceImpl extends ServiceImpl<ProductCategoryMappe
 
     @Override
     public ProductCategoryDO getCategory(Long id) {
-        return productCategoryMapper.selectById(id);
+        ProductCategoryDO category = productCategoryMapper.selectById(id);
+        if (category == null) {
+            return null;
+        }
+        co.yixiang.yshop.framework.common.shop.ShopAccess.assertSameShop(
+                category.getShopId() == null ? null : category.getShopId().longValue(),
+                co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(null));
+        return category;
     }
 
     @Override

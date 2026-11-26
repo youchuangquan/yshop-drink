@@ -243,6 +243,7 @@ import { useMainStore } from '@/store/store'
 import { storeToRefs } from 'pinia'
 import { onLoad,onShow ,onPullDownRefresh,onHide,onUnload} from '@dcloudio/uni-app'
 import { formatDateTime,kmUnit,throttle } from '@/utils/util'
+import { cartKey } from '@/utils/shopSession'
 import {
   shopNearby,
   menuGoods
@@ -441,11 +442,18 @@ const getShopList = async(res) => {
 		}
 	}
 }
+const persistCart = () => {
+	if (!store.value.id) {
+		return
+	}
+	uni.setStorageSync(cartKey(store.value.id), JSON.parse(JSON.stringify(cart.value)))
+	uni.removeStorageSync('cart')
+}
 const refreshCart = () =>{
 	if (goods.value && goods.value.length > 0) {
 		let newGoods = goods.value;
 		cart.value = [];
-		let newCart = uni.getStorageSync('cart') || [];
+		let newCart = store.value.id ? (uni.getStorageSync(cartKey(store.value.id)) || []) : [];
 		let tmpCart = [];
 		if (newCart) {
 			for (let i in newCart) {
@@ -560,7 +568,7 @@ const handleAddToCart = (cate, newGood, num) =>{ //添加到购物车
 			valueStr: good.value.valueStr
 		})
 	}
-	uni.setStorageSync('cart', JSON.parse(JSON.stringify(cart.value)))
+	persistCart()
 }
 const handleReduceFromCart = (item, good) => {
 	const index = cart.value.findIndex(item => item.id === good.id)
@@ -568,7 +576,7 @@ const handleReduceFromCart = (item, good) => {
 	if (cart.value[index].number <= 0) {
 		cart.value.splice(index, 1)
 	}
-	uni.setStorageSync('cart', JSON.parse(JSON.stringify(cart.value)))
+	persistCart()
 }
 const showGoodDetailModal = (item, newGood) => {
 	isCartShow.value = true
@@ -649,14 +657,14 @@ const handleCartClear = () => { //清空购物车
 			if (confirm) {
 				popup.value.close()
 				cart.value = []
-				uni.setStorageSync('cart', JSON.parse(JSON.stringify(cart.value)))
+				persistCart()
 			}
 		}
 	})
 }
 const handleCartItemAdd = (index) => {
 	cart.value[index].number += 1
-	uni.setStorageSync('cart', JSON.parse(JSON.stringify(cart.value)))
+	persistCart()
 }
 const handleCartItemReduce = (index) => {
 	if (cart.value[index].number === 1) {
@@ -667,7 +675,7 @@ const handleCartItemReduce = (index) => {
 	if (!cart.value.length) {
 		cartPopupVisible.value = false
 	}
-	uni.setStorageSync('cart', JSON.parse(JSON.stringify(cart.value)))
+	persistCart()
 }
 const toPay = () => {
 
@@ -694,7 +702,7 @@ const toPay = () => {
 		uni.showLoading({
 			title: '加载中'
 		})
-		uni.setStorageSync('cart', JSON.parse(JSON.stringify(cart.value)))
+		persistCart()
 
 		uni.navigateTo({
 			url: '/pages-checkout/pay/pay'

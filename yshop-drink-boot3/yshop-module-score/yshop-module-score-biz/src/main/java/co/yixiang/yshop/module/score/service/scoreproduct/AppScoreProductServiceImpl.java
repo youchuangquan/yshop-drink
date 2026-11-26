@@ -1,5 +1,6 @@
 package co.yixiang.yshop.module.score.service.scoreproduct;
 
+import co.yixiang.yshop.framework.common.shop.ShopAccess;
 import co.yixiang.yshop.module.score.controller.app.product.vo.AppScoreProductVO;
 import co.yixiang.yshop.module.score.convert.scoreproduct.ScoreProductConvert;
 import co.yixiang.yshop.module.score.dal.dataobject.scoreproduct.ScoreProductDO;
@@ -34,9 +35,11 @@ public class AppScoreProductServiceImpl  extends ServiceImpl<ScoreProductMapper,
      * @return list
      */
     @Override
-    public List<AppScoreProductVO> getList(int page, int limit) {
+    public List<AppScoreProductVO> getList(int page, int limit, Long shopId) {
+        long scopedShopId = ShopAccess.requirePositiveShopId(shopId);
         LambdaQueryWrapper<ScoreProductDO> wrapper = new LambdaQueryWrapper<>();
-        wrapper.orderByDesc(ScoreProductDO::getWeigh);
+        wrapper.eq(ScoreProductDO::getShopId, scopedShopId)
+                .orderByDesc(ScoreProductDO::getWeigh);
 
 
         Page<ScoreProductDO> pageModel = new Page<>(page, limit);
@@ -53,8 +56,15 @@ public class AppScoreProductServiceImpl  extends ServiceImpl<ScoreProductMapper,
      * @return list
      */
     @Override
-    public AppScoreProductVO getDetail(Long id) {
-        ScoreProductDO scoreProductDO = this.getById(id);
+    public AppScoreProductVO getDetail(Long id, Long shopId) {
+        long scopedShopId = ShopAccess.requirePositiveShopId(shopId);
+        ScoreProductDO scoreProductDO = this.getOne(new LambdaQueryWrapper<ScoreProductDO>()
+                .eq(ScoreProductDO::getId, id)
+                .eq(ScoreProductDO::getShopId, scopedShopId));
+        if (scoreProductDO == null && this.getById(id) != null) {
+            throw co.yixiang.yshop.framework.common.exception.util.ServiceExceptionUtil.exception(
+                    co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.FORBIDDEN);
+        }
         return ScoreProductConvert.INSTANCE.convert01(scoreProductDO);
     }
 }

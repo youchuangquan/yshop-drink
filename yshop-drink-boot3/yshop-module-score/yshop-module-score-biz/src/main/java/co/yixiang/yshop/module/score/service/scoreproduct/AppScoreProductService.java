@@ -19,14 +19,14 @@ public interface AppScoreProductService  extends IService<ScoreProductDO> {
      * @param limit limit
      * @return list
      */
-    List<AppScoreProductVO> getList(int page, int limit);
+    List<AppScoreProductVO> getList(int page, int limit, Long shopId);
 
     /**
      * 详情
      * @param id 产品ID
      * @return list
      */
-    AppScoreProductVO getDetail(Long id);
+    AppScoreProductVO getDetail(Long id, Long shopId);
 
 
 }

@@ -58,9 +58,10 @@ public class AppScoreOrderController {
     })
     public CommonResult<List<AppScoreOrderVO>> orderList(@RequestParam(value = "type", defaultValue = "0") int type,
                                                          @RequestParam(value = "page", defaultValue = "1") int page,
-                                                         @RequestParam(value = "limit", defaultValue = "10") int limit) {
+                                                         @RequestParam(value = "limit", defaultValue = "10") int limit,
+                                                         @RequestParam("shopId") Long shopId) {
         Long uid = getLoginUserId();
-        return success(appScoreOrderService.orderList(uid, type, page, limit));
+        return success(appScoreOrderService.orderList(uid, shopId, type, page, limit));
     }
 
     /**
@@ -73,9 +74,10 @@ public class AppScoreOrderController {
             @Parameter(name = "id", description = "id",
                     required = true, example = "1")
     })
-    public CommonResult<AppScoreOrderVO> orderList(@RequestParam(value = "id", defaultValue = "0") Long id) {
+    public CommonResult<AppScoreOrderVO> orderList(@RequestParam(value = "id", defaultValue = "0") Long id,
+                                                   @RequestParam("shopId") Long shopId) {
         Long uid = getLoginUserId();
-        return success(appScoreOrderService.orderDetail(uid, id));
+        return success(appScoreOrderService.orderDetail(uid, id, shopId));
     }
 
 
@@ -85,9 +87,10 @@ public class AppScoreOrderController {
     @PreAuthenticated
     @GetMapping("/take")
     @Operation(summary = "收货")
-    public CommonResult<Boolean> take(@RequestParam(value = "id", defaultValue = "0") Long id){
+    public CommonResult<Boolean> take(@RequestParam(value = "id", defaultValue = "0") Long id,
+                                      @RequestParam("shopId") Long shopId){
         Long uid = getLoginUserId();
-        appScoreOrderService.take(uid,id);
+        appScoreOrderService.take(uid,id, shopId);
         return success(true);
     }
 

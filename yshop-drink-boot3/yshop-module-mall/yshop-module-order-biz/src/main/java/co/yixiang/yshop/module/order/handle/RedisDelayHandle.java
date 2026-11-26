@@ -57,7 +57,10 @@ public class RedisDelayHandle {
                     String orderId = blockingDeque.take();
                     log.info("延迟队列监听未支付订单订单编号：{}", orderId);
                     if(StrUtil.isNotEmpty(orderId)) {
-                        appStoreOrderService.cancelOrder(orderId,null);
+                        var order = appStoreOrderService.getOrderInfo(orderId, null);
+                        if (order != null && order.getShopId() != null) {
+                            appStoreOrderService.cancelOrder(orderId, null, order.getShopId());
+                        }
                     }
                 } catch (Exception e) {
                     log.error("Redission延迟队列监测异常中断,忽略此消息：{}", e.getMessage());
@@ -82,7 +85,10 @@ public class RedisDelayHandle {
                     String orderId = blockingDeque.take();
                     log.info("延迟队列监听收货超时订单订单编号：{}", orderId);
                     if(StrUtil.isNotEmpty(orderId)) {
-                        appStoreOrderService.takeOrder(orderId,null);
+                        var order = appStoreOrderService.getOrderInfo(orderId, null);
+                        if (order != null && order.getShopId() != null) {
+                            appStoreOrderService.takeOrder(orderId, null, order.getShopId());
+                        }
                     }
                 } catch (Exception e) {
                     log.error("Redission延迟队列监测异常中断,忽略此消息：{}", e.getMessage());

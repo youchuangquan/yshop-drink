@@ -100,7 +100,7 @@ import {
   mineService
 } from '@/api/user'
 const main = useMainStore()
-const { member,isLogin } = storeToRefs(main)
+const { member,isLogin, store } = storeToRefs(main)
 
 const title = ref('个人中心')
 const services = ref([])
@@ -124,7 +124,7 @@ onShow(() => {
 
 const getUserInfo = async() => {
 	if (isLogin.value) {
-		let data = await userGetUserInfo();
+		let data = await userGetUserInfo({ shopId: store.value.id });
 		if (data) {
 			main.SET_MEMBER(data);
 		}

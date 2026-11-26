@@ -28,7 +28,10 @@ public class OrderAutoConfirmListener implements DelayedQueueListener<OrderMsg> 
     public void consume(OrderMsg message) throws Exception {
         if(ObjectUtil.isNotNull(message) && StrUtil.isNotEmpty(message.getOrderId())) {
             TenantUtils.executeIgnore(() -> {
-                appStoreOrderService.takeOrder(message.getOrderId(),null);
+                var order = appStoreOrderService.getOrderInfo(message.getOrderId(), null);
+                if (order != null && order.getShopId() != null) {
+                    appStoreOrderService.takeOrder(message.getOrderId(), null, order.getShopId());
+                }
                 log.info("订单编号:{}自动确认收货成功",message.getOrderId());
             });
         }

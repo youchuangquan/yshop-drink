@@ -4,6 +4,7 @@ import cn.hutool.core.collection.ListUtil;
 import cn.hutool.core.util.StrUtil;
 import co.yixiang.yshop.framework.common.enums.ShopCommonEnum;
 import co.yixiang.yshop.framework.common.exception.ErrorCode;
+import co.yixiang.yshop.framework.common.shop.ShopAccess;
 import co.yixiang.yshop.module.product.controller.app.category.vo.AppCategoryRespVO;
 import co.yixiang.yshop.module.product.controller.app.product.param.AppStoreProductQueryParam;
 import co.yixiang.yshop.module.product.controller.app.product.vo.AppStoreProductAttrQueryVo;
@@ -36,6 +37,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
+import static co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.FORBIDDEN;
 import static co.yixiang.yshop.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static co.yixiang.yshop.module.product.enums.ErrorCodeConstants.PRODUCT_STOCK_LESS;
 import static co.yixiang.yshop.module.product.enums.ErrorCodeConstants.STORE_PRODUCT_NOT_EXISTS;
@@ -69,9 +71,10 @@ public class AppStoreProductServiceImpl extends ServiceImpl<StoreProductMapper,S
      * @return List
      */
     @Override
-    public List<AppStoreProductRespVo> getList(int page, int limit, int order) {
+    public List<AppStoreProductRespVo> getList(int page, int limit, int order, Long shopId) {
         LambdaQueryWrapper<StoreProductDO> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(StoreProductDO::getIsShow, ShopCommonEnum.SHOW_1.getValue())
+        wrapper.eq(StoreProductDO::getShopId, ShopAccess.toIntShop(ShopAccess.requirePositiveShopId(shopId)))
+                .eq(StoreProductDO::getIsShow, ShopCommonEnum.SHOW_1.getValue())
                 //.eq(YxStoreProduct::getIsDel,ShopCommonEnum.DELETE_0.getValue())
                 .orderByDesc(StoreProductDO::getSort);
         wrapper.eq(StoreProductDO::getIsIntegral,0);
@@ -115,8 +118,9 @@ public class AppStoreProductServiceImpl extends ServiceImpl<StoreProductMapper,S
      */
     @Override
     public List<AppCategoryRespVO> getGoodsList(AppStoreProductQueryParam productQueryParam) {
-
-        List<ProductCategoryDO> list = categoryService.getEnableCategoryList(productQueryParam.getShopId());
+        int shopId = ShopAccess.toIntShop(ShopAccess.requirePositiveShopId(productQueryParam.getShopId()));
+        productQueryParam.setShopId(shopId);
+        List<ProductCategoryDO> list = categoryService.getEnableCategoryList(shopId);
         list.sort(Comparator.comparing(ProductCategoryDO::getSort));
         List<AppCategoryRespVO> appCategoryRespVOS =  ProductCategoryConvert.INSTANCE.convertList03(list);
 
@@ -181,8 +185,19 @@ public class AppStoreProductServiceImpl extends ServiceImpl<StoreProductMapper,S
      * @return YxStoreProductQueryVo
      */
     @Override
-    public AppStoreProductRespVo getStoreProductById(Long id) {
-        AppStoreProductRespVo storeProductRespVo = StoreProductConvert.INSTANCE.convert01(this.baseMapper.selectById(id));
+    public AppStoreProductRespVo getStoreProductById(Long id, Long shopId) {
+        int scopedShopId = ShopAccess.toIntShop(ShopAccess.requirePositiveShopId(shopId));
+        StoreProductDO product = this.baseMapper.selectOne(new LambdaQueryWrapper<StoreProductDO>()
+                .eq(StoreProductDO::getId, id)
+                .eq(StoreProductDO::getShopId, scopedShopId));
+        if (product == null) {
+            StoreProductDO other = this.baseMapper.selectById(id);
+            if (other != null) {
+                throw exception(FORBIDDEN);
+            }
+            throw exception(STORE_PRODUCT_NOT_EXISTS);
+        }
+        AppStoreProductRespVo storeProductRespVo = StoreProductConvert.INSTANCE.convert01(product);
         Map<String, Object> returnMap = appStoreProductAttrService.getProductAttrDetail(id);
         storeProductRespVo.setProductAttr((List<AppStoreProductAttrQueryVo>) returnMap.get("productAttr"));
         storeProductRespVo.setProductValue((Map<String, StoreProductAttrValueDO>) returnMap.get("productValue"));
@@ -199,8 +214,8 @@ public class AppStoreProductServiceImpl extends ServiceImpl<StoreProductMapper,S
      */
     @Override
     @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
-    public void decProductStock(int num, Long productId, String unique, Long activityId, String type) {
-
+    public void decProductStock(int num, Long productId, String unique, Long activityId, String type, Long shopId) {
+        int scopedShopId = ShopAccess.toIntShop(ShopAccess.requirePositiveShopId(shopId));
 
         int res = 0;
         res =  storeProductAttrValueMapper.decStockIncSales(num,productId,unique);
@@ -209,7 +224,7 @@ public class AppStoreProductServiceImpl extends ServiceImpl<StoreProductMapper,S
             throw exception(PRODUCT_STOCK_LESS);
         }
 
-        int product = this.baseMapper.decStockIncSales(num, productId);
+        int product = this.baseMapper.decStockIncSales(num, productId, scopedShopId);
         if (product == 0) {
             throw exception(PRODUCT_STOCK_LESS);
         }
@@ -226,13 +241,12 @@ public class AppStoreProductServiceImpl extends ServiceImpl<StoreProductMapper,S
      * @param unique    sku唯一值
      */
     @Override
-    public void incProductStock(Integer num, Long productId, String unique, Long activityId, String type) {
-        //处理属性sku
+    public void incProductStock(Integer num, Long productId, String unique, Long activityId, String type, Long shopId) {
+        int scopedShopId = ShopAccess.toIntShop(ShopAccess.requirePositiveShopId(shopId));
         if (StrUtil.isNotEmpty(unique)) {
             storeProductAttrValueMapper.incStockDecSales(num, productId, unique);
         }
-        //更新商品
-        this.baseMapper.incStockDecSales(num, productId);
+        this.baseMapper.incStockDecSales(num, productId, scopedShopId);
     }
 
     /**
@@ -244,11 +258,16 @@ public class AppStoreProductServiceImpl extends ServiceImpl<StoreProductMapper,S
      * @param productAttrUnique 商品属性Unique
      */
     @Override
-    public void checkProductStock(Long uid, Long productId, Integer cartNum, String productAttrUnique) {
+    public void checkProductStock(Long uid, Long productId, Integer cartNum, String productAttrUnique, Long shopId) {
+        int scopedShopId = ShopAccess.toIntShop(ShopAccess.requirePositiveShopId(shopId));
         StoreProductDO product = this
                 .lambdaQuery().eq(StoreProductDO::getId, productId)
+                .eq(StoreProductDO::getShopId, scopedShopId)
                 .eq(StoreProductDO::getIsShow, ShopCommonEnum.SHOW_1.getValue())
                 .one();
+        if (product == null && this.lambdaQuery().eq(StoreProductDO::getId, productId).one() != null) {
+            throw exception(FORBIDDEN);
+        }
         if (product == null) {
             throw exception(STORE_PRODUCT_NOT_EXISTS);
         }

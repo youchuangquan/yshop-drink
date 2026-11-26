@@ -3,6 +3,7 @@ package co.yixiang.yshop.module.coupon.service.coupon;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.ObjectUtil;
 import co.yixiang.yshop.framework.common.enums.ShopCommonEnum;
+import co.yixiang.yshop.framework.common.shop.ShopAccess;
 import co.yixiang.yshop.framework.common.pojo.PageResult;
 import co.yixiang.yshop.framework.common.util.object.ObjectUtils;
 import co.yixiang.yshop.framework.mybatis.core.query.LambdaQueryWrapperX;
@@ -38,6 +39,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import static co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.FORBIDDEN;
 import static co.yixiang.yshop.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static co.yixiang.yshop.module.coupon.enums.ErrorCodeConstants.*;
 
@@ -67,8 +69,9 @@ public class AppCouponServiceImpl extends ServiceImpl<CouponMapper, CouponDO> im
     public List<AppCouponVO> getNotList(Long uid, Long shopId, int page, int pagesize) {
         LocalDateTime nowTime = LocalDateTime.now();
         Page<CouponDO> pageModel = new Page<>(page, pagesize);
+        String scopedShopId = ShopAccess.shopKey(ShopAccess.requirePositiveShopId(shopId));
         LambdaQueryWrapperX<CouponDO> wrapper = new LambdaQueryWrapperX<>();
-        wrapper.eqIfPresent(CouponDO::getShopId, shopId)
+        wrapper.eq(CouponDO::getShopId, scopedShopId)
                 .gt(CouponDO::getEndTime,nowTime)
                 .orderByDesc(CouponDO::getWeigh);
         IPage<CouponDO> pageList = this.baseMapper.selectPage(pageModel, wrapper);
@@ -95,12 +98,23 @@ public class AppCouponServiceImpl extends ServiceImpl<CouponMapper, CouponDO> im
      */
     @Override
     @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
-    public void receive(Long uid, Long id, String code) {
-        CouponDO couponDO = null;
+    public void receive(Long uid, Long id, String code, Long shopId) {
+        String scopedShopId = ShopAccess.shopKey(ShopAccess.requirePositiveShopId(shopId));
+        CouponDO couponDO;
         if(id != null){
-            couponDO = this.baseMapper.selectById(id);
+            couponDO = this.baseMapper.selectOne(new LambdaQueryWrapper<CouponDO>()
+                    .eq(CouponDO::getId, id)
+                    .eq(CouponDO::getShopId, scopedShopId));
+            if (couponDO == null && this.baseMapper.selectById(id) != null) {
+                throw exception(FORBIDDEN);
+            }
         }else {
-            couponDO = couponMapper.selectOne(CouponDO::getExchangeCode,code);
+            couponDO = couponMapper.selectOne(new LambdaQueryWrapper<CouponDO>()
+                    .eq(CouponDO::getExchangeCode, code)
+                    .eq(CouponDO::getShopId, scopedShopId));
+            if (couponDO == null && couponMapper.selectOne(CouponDO::getExchangeCode, code) != null) {
+                throw exception(FORBIDDEN);
+            }
         }
         if(couponDO == null){
             throw exception(COUPON_NOT_EXISTS);

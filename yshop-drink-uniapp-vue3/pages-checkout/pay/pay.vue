@@ -349,7 +349,7 @@ onHide(() => {
 	coupons.value = 0;
 })
 onLoad((option) => {
-	cart.value = uni.getStorageSync('cart')
+	cart.value = store.value && store.value.id ? (uni.getStorageSync('cart:' + store.value.id) || []) : []
 	if(option.remark) {
 		form.value.remark = option.remark
 	}
@@ -590,7 +590,8 @@ const balancePay = async(order) => {
 	let pay = await payUnify({
 		uni: order.orderId,
 		from: from,
-		paytype: 'yue'
+		paytype: 'yue',
+		shopId: store.value.id
 	});
 
 	uni.hideLoading();
@@ -601,6 +602,7 @@ const balancePay = async(order) => {
 	member.value.money -= amount.value
 	main.SET_MEMBER(member.value)
 	uni.removeStorageSync('cart');
+	if (store.value.id) { uni.removeStorageSync('cart:' + store.value.id) }
 	uni.switchTab({
 		url: '/pages/order/order',
 		fail(res) {
@@ -621,7 +623,8 @@ const weixinPay = async(order) => {
 	let data = await payUnify({
 		uni: order.orderId,
 		from: from,
-		paytype: 'weixin'
+		paytype: 'weixin',
+		shopId: store.value.id
 	});
 	console.log('param2:',data)
 	if (!data) {
@@ -649,6 +652,7 @@ const weixinPay = async(order) => {
 			success: function(res) {
 
 				uni.removeStorageSync('cart');
+	if (store.value.id) { uni.removeStorageSync('cart:' + store.value.id) }
 				uni.switchTab({
 					url: '/pages/order/order'
 				});
@@ -680,7 +684,8 @@ const aliPay = async(order) => {
 	let data = await payUnify({
 		uni: order.orderId,
 		from: 'h5',
-		paytype: 'alipay'
+		paytype: 'alipay',
+		shopId: store.value.id
 	});
 
 	console.log('data:',data.data)

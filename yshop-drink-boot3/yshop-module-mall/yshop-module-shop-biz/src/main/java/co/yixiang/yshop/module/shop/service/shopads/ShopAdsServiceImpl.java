@@ -41,12 +41,15 @@ public class ShopAdsServiceImpl implements ShopAdsService {
 
         // 插入
         ShopAdsDO ads = ShopAdsConvert.INSTANCE.convert(createReqVO);
-        StoreShopDO storeShopDO = storeShopMapper.selectById(createReqVO.getShopId());
-        if(storeShopDO == null){
-            ads.setShopName("全部");
-        }else{
-            ads.setShopName(storeShopDO.getName());
+        String shopId = co.yixiang.yshop.framework.common.shop.ShopAccess.shopKey(
+                co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(createReqVO.getShopId()));
+        StoreShopDO storeShopDO = storeShopMapper.selectById(shopId);
+        if (storeShopDO == null) {
+            throw co.yixiang.yshop.framework.common.exception.util.ServiceExceptionUtil.exception(
+                    co.yixiang.yshop.module.store.enums.ErrorCodeConstants.SHOP_NOT_EXISTS);
         }
+        ads.setShopId(shopId);
+        ads.setShopName(storeShopDO.getName());
         adsMapper.insert(ads);
         // 返回
         return ads.getId();
@@ -55,14 +58,21 @@ public class ShopAdsServiceImpl implements ShopAdsService {
     @Override
     public void updateAds(ShopAdsUpdateReqVO updateReqVO) {
         // 校验存在
-        validateAdsExists(updateReqVO.getId());
-        ShopAdsDO updateObj = ShopAdsConvert.INSTANCE.convert(updateReqVO);
-        StoreShopDO storeShopDO= storeShopMapper.selectById(updateReqVO.getShopId());
-        if(storeShopDO == null){
-            updateObj.setShopName("全部");
-        }else{
-            updateObj.setShopName(storeShopDO.getName());
+        ShopAdsDO exists = adsMapper.selectById(updateReqVO.getId());
+        if (exists == null) {
+            throw exception(ADS_NOT_EXISTS);
         }
+        String shopId = co.yixiang.yshop.framework.common.shop.ShopAccess.shopKey(
+                co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(updateReqVO.getShopId()));
+        co.yixiang.yshop.framework.common.shop.ShopAccess.assertCouponBelongs(exists.getShopId(), Long.parseLong(shopId));
+        ShopAdsDO updateObj = ShopAdsConvert.INSTANCE.convert(updateReqVO);
+        StoreShopDO storeShopDO = storeShopMapper.selectById(shopId);
+        if (storeShopDO == null) {
+            throw co.yixiang.yshop.framework.common.exception.util.ServiceExceptionUtil.exception(
+                    co.yixiang.yshop.module.store.enums.ErrorCodeConstants.SHOP_NOT_EXISTS);
+        }
+        updateObj.setShopId(shopId);
+        updateObj.setShopName(storeShopDO.getName());
         adsMapper.updateById(updateObj);
     }
 

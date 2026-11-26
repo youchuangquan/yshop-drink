@@ -23,7 +23,7 @@ public interface AppStoreProductService extends IService<StoreProductDO> {
      * @param order ProductEnum
      * @return List
      */
-    List<AppStoreProductRespVo> getList(int page, int limit, int order);
+    List<AppStoreProductRespVo> getList(int page, int limit, int order, Long shopId);
 
     /**
      * 商品列表
@@ -46,7 +46,7 @@ public interface AppStoreProductService extends IService<StoreProductDO> {
      * @param id 商品id
      * @return YxStoreProductQueryVo
      */
-    AppStoreProductRespVo getStoreProductById(Long id);
+    AppStoreProductRespVo getStoreProductById(Long id, Long shopId);
 
     /**
      * 减少库存与增加销量
@@ -54,7 +54,7 @@ public interface AppStoreProductService extends IService<StoreProductDO> {
      * @param productId 商品id
      * @param unique sku
      */
-    void decProductStock(int num, Long productId, String unique,Long activityId,String type);
+    void decProductStock(int num, Long productId, String unique,Long activityId,String type, Long shopId);
 
     /**
      * 增加库存 减少销量
@@ -62,7 +62,7 @@ public interface AppStoreProductService extends IService<StoreProductDO> {
      * @param productId 商品id
      * @param unique sku唯一值
      */
-    void incProductStock(Integer num, Long productId, String unique,Long activityId, String type);
+    void incProductStock(Integer num, Long productId, String unique,Long activityId, String type, Long shopId);
 
     /**
      * 检测商品/秒杀/砍价/拼团库存
@@ -71,7 +71,7 @@ public interface AppStoreProductService extends IService<StoreProductDO> {
      * @param cartNum 购买数量
      * @param productAttrUnique  商品属性Unique
      */
-    void checkProductStock(Long uid, Long productId, Integer cartNum, String productAttrUnique);
+    void checkProductStock(Long uid, Long productId, Integer cartNum, String productAttrUnique, Long shopId);
 
 
 }

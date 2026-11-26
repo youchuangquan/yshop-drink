@@ -123,9 +123,10 @@ public class AppOrderController {
     })
     public CommonResult<List<AppStoreOrderQueryVo>> orderList(@RequestParam(value = "type", defaultValue = "0") int type,
                                        @RequestParam(value = "page", defaultValue = "1") int page,
-                                       @RequestParam(value = "limit", defaultValue = "10") int limit) {
+                                       @RequestParam(value = "limit", defaultValue = "10") int limit,
+                                       @RequestParam("shopId") Long shopId) {
         Long uid = getLoginUserId();
-        return success(appStoreOrderService.orderList(uid, type, page, limit));
+        return success(appStoreOrderService.orderList(uid, shopId, type, page, limit));
     }
 
 
@@ -136,12 +137,17 @@ public class AppOrderController {
     @GetMapping("/detail/{key}")
     @Operation(summary = "订单详情")
     @Parameter(name = "key", description = "唯一的uni值或者订单号", required = true, example = "10      ")
-    public CommonResult<AppStoreOrderQueryVo> detail(@PathVariable String key) {
+    public CommonResult<AppStoreOrderQueryVo> detail(@PathVariable String key,
+                                                     @RequestParam("shopId") Long shopId) {
         Long uid = getLoginUserId();
         if (StrUtil.isEmpty(key)) {
             throw exception(PARAM_ERROR);
         }
         AppStoreOrderQueryVo storeOrder = appStoreOrderService.getOrderInfo(key, uid);
+        if (storeOrder != null) {
+            co.yixiang.yshop.framework.common.shop.ShopAccess.assertSameShop(storeOrder.getShopId(),
+                    co.yixiang.yshop.framework.common.shop.ShopAccess.requirePositiveShopId(shopId));
+        }
         if (ObjectUtil.isNull(storeOrder)) {
             throw exception(STORE_ORDER_NOT_EXISTS);
         }
@@ -157,7 +163,8 @@ public class AppOrderController {
     @Operation(summary = "订单收货")
     public CommonResult<Boolean> orderTake(@RequestBody @Validated AppDoOrderParam param) {
         Long uid = getLoginUserId();
-        appStoreOrderService.takeOrder(param.getUni(), uid);
+        appStoreOrderService.takeOrder(param.getUni(), uid,
+                co.yixiang.yshop.framework.common.shop.ShopAccess.requirePositiveShopId(param.getShopId()));
         return success(true);
     }
 
@@ -171,7 +178,8 @@ public class AppOrderController {
         appStoreOrderService.orderApplyRefund(param.getRefundReasonWapExplain(),
                 param.getRefundReasonWapImg(),
                 param.getText(),
-                param.getUni(), uid);
+                param.getUni(), uid,
+                co.yixiang.yshop.framework.common.shop.ShopAccess.requirePositiveShopId(param.getShopId()));
         return success(true);
     }
 
@@ -186,7 +194,8 @@ public class AppOrderController {
     @Operation(summary = "订单删除")
     public CommonResult<Boolean> orderDel(@Validated @RequestBody AppDoOrderParam param) {
         Long uid = getLoginUserId();
-        appStoreOrderService.removeOrder(param.getUni(), uid);
+        appStoreOrderService.removeOrder(param.getUni(), uid,
+                co.yixiang.yshop.framework.common.shop.ShopAccess.requirePositiveShopId(param.getShopId()));
         return success(true);
     }
 
@@ -201,7 +210,8 @@ public class AppOrderController {
     @Operation(summary = "订单取消")
     public CommonResult<Boolean> cancelOrder(@Validated @RequestBody AppHandleOrderParam param) {
         Long uid = getLoginUserId();
-        appStoreOrderService.cancelOrder(param.getId(), uid);
+        appStoreOrderService.cancelOrder(param.getId(), uid,
+                co.yixiang.yshop.framework.common.shop.ShopAccess.requirePositiveShopId(param.getShopId()));
         return success(true);
     }
 

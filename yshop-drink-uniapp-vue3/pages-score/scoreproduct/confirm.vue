@@ -64,7 +64,7 @@ import { useMainStore } from '@/store/store'
 import { storeToRefs } from 'pinia'
 const { proxy } = getCurrentInstance();
 const main = useMainStore()
-const { address,isLogin} = storeToRefs(main)
+const { address,isLogin, store} = storeToRefs(main)
 
 const title = ref("确认订单")
 const product = ref({})
@@ -106,7 +106,8 @@ const submit = async() => {
 	let data = await scoreShopExchange({
 		productId: product.value.id,
 		addressId: address.value.id,
-		num: 1
+		num: 1,
+		shopId: store.value.id
 	})
 
 	if (data) {

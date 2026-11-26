@@ -27,9 +27,13 @@ import {
   ref
 } from 'vue'
 import { onLoad} from '@dcloudio/uni-app'
+import { useMainStore } from '@/store/store'
+import { storeToRefs } from 'pinia'
 import {
   orderRefund
 } from '@/api/order'
+const main = useMainStore()
+const { store } = storeToRefs(main)
 const title = ref('申请退款')
 const orderId = ref('')
 const payPrice = ref('')
@@ -44,7 +48,7 @@ onLoad((option) => {
 })
 
 const refund  = async() => {
-	let data = await orderRefund({refundReasonWapExplain:refundReasonWapExplain.value,uni:orderId.value,text:'协商一致'});
+	let data = await orderRefund({refundReasonWapExplain:refundReasonWapExplain.value,uni:orderId.value,text:'协商一致', shopId: store.value.id});
 	if (data) {
 		uni.showToast({
 			title: '提交成功',

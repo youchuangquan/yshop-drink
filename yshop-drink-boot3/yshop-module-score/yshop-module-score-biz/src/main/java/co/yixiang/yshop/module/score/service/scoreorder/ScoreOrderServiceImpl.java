@@ -74,6 +74,8 @@ public class ScoreOrderServiceImpl implements ScoreOrderService {
         if (scoreOrderDO == null) {
             throw exception(ORDER_NOT_EXISTS);
         }
+        co.yixiang.yshop.framework.common.shop.ShopAccess.assertSameShop(scoreOrderDO.getShopId(),
+                co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(null));
         scoreOrderDO.setHaveReceived(ShopCommonEnum.DEFAULT_1.getValue());
         orderMapper.updateById(scoreOrderDO);
 

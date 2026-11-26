@@ -32,7 +32,7 @@ public class AppScoreProductController {
     @GetMapping("/list")
     @Operation(summary = "获取积分商品列表")
     public CommonResult<List<AppScoreProductVO>> goodsList(AppScoreProductQueryParam productQueryParam){
-        return success(appScoreProductService.getList(productQueryParam.getPage(),productQueryParam.getLimit()));
+        return success(appScoreProductService.getList(productQueryParam.getPage(),productQueryParam.getLimit(), productQueryParam.getShopId()));
     }
 
     /**
@@ -40,8 +40,9 @@ public class AppScoreProductController {
      */
     @GetMapping("/detail")
     @Operation(summary = "获取积分商品详情")
-    public CommonResult<AppScoreProductVO> goodsDetail(@RequestParam(value = "id", defaultValue = "0") Long id){
-        return success(appScoreProductService.getDetail(id));
+    public CommonResult<AppScoreProductVO> goodsDetail(@RequestParam(value = "id", defaultValue = "0") Long id,
+                                                       @RequestParam("shopId") Long shopId){
+        return success(appScoreProductService.getDetail(id, shopId));
     }
 
 }
