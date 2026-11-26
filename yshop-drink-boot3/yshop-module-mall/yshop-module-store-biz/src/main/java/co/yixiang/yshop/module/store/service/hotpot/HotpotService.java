@@ -1,6 +1,8 @@
 package co.yixiang.yshop.module.store.service.hotpot;
 
+import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotBoundBillResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotHoldResp;
+import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotStaffHoldResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotPotResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotScanResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotSessionResp;
@@ -18,6 +20,10 @@ public interface HotpotService {
     HotpotPotResp createPot(long shopId, long actorUid, String name, Integer priceFen, String requestKey);
 
     List<HotpotSlotResp> listSlots(long shopId);
+
+    List<HotpotStaffHoldResp> listCurrentHolds(long shopId);
+
+    HotpotBoundBillResp boundBill(long shopId, String signCode, long callerUid);
 
     List<HotpotTableResp> listTables(long shopId);
 

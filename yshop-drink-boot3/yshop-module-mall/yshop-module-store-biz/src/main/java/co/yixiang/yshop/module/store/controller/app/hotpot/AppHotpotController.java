@@ -3,9 +3,11 @@ package co.yixiang.yshop.module.store.controller.app.hotpot;
 import co.yixiang.yshop.framework.common.pojo.CommonResult;
 import co.yixiang.yshop.framework.security.core.annotations.PreAuthenticated;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.AppHotpotCommands;
+import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotBoundBillResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotHoldResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotScanResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotSessionResp;
+import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotSlotResp;
 import co.yixiang.yshop.module.store.service.hotpot.HotpotService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -18,6 +20,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 import static co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.UNAUTHORIZED;
 import static co.yixiang.yshop.framework.common.exception.util.ServiceExceptionUtil.exception;
@@ -36,6 +40,21 @@ public class AppHotpotController {
 
     @Resource
     private HotpotService hotpotService;
+
+    @GetMapping("/slot")
+    @Operation(summary = "本店时段")
+    @PreAuthenticated
+    public CommonResult<List<HotpotSlotResp>> listSlots(@RequestParam("shopId") Long shopId) {
+        return success(hotpotService.listSlots(shopId));
+    }
+
+    @GetMapping("/bill")
+    @Operation(summary = "绑定顾客查看自己的开台")
+    @PreAuthenticated
+    public CommonResult<HotpotBoundBillResp> boundBill(@RequestParam("shopId") Long shopId,
+                                                       @RequestParam("signCode") String signCode) {
+        return success(hotpotService.boundBill(shopId, signCode, loginUser()));
+    }
 
     @PostMapping("/reservation")
     @Operation(summary = "预约占时段容量")

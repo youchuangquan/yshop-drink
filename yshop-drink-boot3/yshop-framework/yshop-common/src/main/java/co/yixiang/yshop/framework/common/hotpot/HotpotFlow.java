@@ -12,6 +12,7 @@ import java.util.Map;
 import static co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.BAD_REQUEST;
 import static co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.FORBIDDEN;
 import static co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.NOT_FOUND;
+import static co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.UNAUTHORIZED;
 import static co.yixiang.yshop.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static co.yixiang.yshop.framework.common.exception.util.ServiceExceptionUtil.exception0;
 
@@ -156,6 +157,66 @@ public final class HotpotFlow {
     /**
      * 公开扫码只能有这两项。桌台绑定的顾客不在这里。
      */
+    /**
+     * 店员占位列表的一行。只有这六项。
+     */
+    public static final class StaffHold {
+        private final long id;
+        private final long slotId;
+        private final long shopId;
+        private final long uid;
+        private final HoldStatus status;
+        private final Long sessionId;
+
+        public StaffHold(long id, long slotId, long shopId, long uid, HoldStatus status, Long sessionId) {
+            this.id = id;
+            this.slotId = slotId;
+            this.shopId = shopId;
+            this.uid = uid;
+            this.status = status;
+            this.sessionId = sessionId;
+        }
+
+        public long id() {
+            return id;
+        }
+
+        public long slotId() {
+            return slotId;
+        }
+
+        public long shopId() {
+            return shopId;
+        }
+
+        public long uid() {
+            return uid;
+        }
+
+        public HoldStatus status() {
+            return status;
+        }
+
+        public Long sessionId() {
+            return sessionId;
+        }
+    }
+
+    /**
+     * 绑定顾客自己的账单。只有开台号。
+     */
+    public static final class BoundBill {
+        private final long sessionId;
+
+        public BoundBill(long sessionId) {
+            this.sessionId = sessionId;
+        }
+
+        public long sessionId() {
+            return sessionId;
+        }
+    }
+
     public static final class PublicScan {
         private final String signCode;
         private final boolean occupied;
@@ -584,6 +645,57 @@ public final class HotpotFlow {
         // 订单模块里余额和现金可以入账。火锅账单这一轮没有接通任何渠道，包括这两种。
         PayChannels.settles(payType);
         return new Settlement(session, false, false, DISPOSITION_UNCONNECTED);
+    }
+
+    public static List<Slot> slotsOf(Board board, long shopId) {
+        shopId = ShopAccess.requirePositiveShopId(shopId);
+        List<Slot> rows = new ArrayList<>();
+        for (Slot slot : board.slots.values()) {
+            if (slot.shopId == shopId) {
+                rows.add(slot);
+            }
+        }
+        return rows;
+    }
+
+    /**
+     * 店员看本店仍占着容量的预约。不含姓名、电话、人数、到店时间和请求键。
+     */
+    public static List<StaffHold> currentHolds(Board board, long shopId) {
+        shopId = ShopAccess.requirePositiveShopId(shopId);
+        List<StaffHold> rows = new ArrayList<>();
+        for (Hold hold : board.holds.values()) {
+            if (hold.shopId != shopId) {
+                continue;
+            }
+            if (hold.status != HoldStatus.HELD && hold.status != HoldStatus.SEATED) {
+                continue;
+            }
+            Session open = openSessionFor(board, hold.id);
+            rows.add(new StaffHold(hold.id, hold.slotId, hold.shopId, hold.ownerUid, hold.status,
+                    open == null ? null : open.id));
+        }
+        return rows;
+    }
+
+    /**
+     * 绑定顾客查看自己的开台账单。对不上就失败，响应里不带身份。
+     */
+    public static BoundBill boundBill(Board board, long shopId, String signCode, long callerUid) {
+        shopId = ShopAccess.requirePositiveShopId(shopId);
+        if (callerUid <= 0) {
+            throw exception(UNAUTHORIZED);
+        }
+        if (signCode == null || signCode.trim().isEmpty()) {
+            throw exception(BAD_REQUEST);
+        }
+        Table table = findTable(board, shopId, signCode.trim());
+        Session session = table == null || table.sessionId == null ? null : board.sessions.get(table.sessionId);
+        if (table == null || table.boundUid == null || table.boundUid != callerUid || session == null
+                || session.shopId != shopId || session.status != SessionStatus.OPEN || session.ownerUid != callerUid) {
+            throw exception(NOT_FOUND);
+        }
+        return new BoundBill(session.id);
     }
 
     public static PublicScan scan(Board board, long shopId, String signCode) {

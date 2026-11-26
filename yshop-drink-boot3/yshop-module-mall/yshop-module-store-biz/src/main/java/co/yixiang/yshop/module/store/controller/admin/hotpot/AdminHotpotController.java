@@ -4,6 +4,7 @@ import co.yixiang.yshop.framework.common.pojo.CommonResult;
 import co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils;
 import co.yixiang.yshop.module.store.controller.admin.hotpot.vo.AdminHotpotCommands;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotHoldResp;
+import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotStaffHoldResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotPotResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotSessionResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotSlotResp;
@@ -67,6 +68,13 @@ public class AdminHotpotController {
     @PreAuthorize("@ss.hasPermission('store:shop:query')")
     public CommonResult<List<HotpotSlotResp>> listSlots() {
         return success(hotpotService.listSlots(shopId()));
+    }
+
+    @GetMapping("/hold")
+    @Operation(summary = "本店当前占位")
+    @PreAuthorize("@ss.hasPermission('store:shop:query')")
+    public CommonResult<List<HotpotStaffHoldResp>> listHolds() {
+        return success(hotpotService.listCurrentHolds(shopId()));
     }
 
     @GetMapping("/table")
