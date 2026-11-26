@@ -69,6 +69,33 @@
 						<text>逛一逛</text>
 					</view>
 				</view>
+				<view class="index-card" @tap="goHotpot('/pages-hotpot/reserve/reserve')">
+					<view class="index-card__main">
+						<view class="index-card__header">
+							<text class="index-card__title">火锅预约</text>
+						</view>
+						<view class="index-card__desc">占时段名额，不锁定桌号</view>
+					</view>
+					<view class="index-card__action">去预约</view>
+				</view>
+				<view class="index-card" @tap="goHotpot('/pages-hotpot/scan/scan')">
+					<view class="index-card__main">
+						<view class="index-card__header">
+							<text class="index-card__title">扫码开桌</text>
+						</view>
+						<view class="index-card__desc">空闲桌看桌号和菜单</view>
+					</view>
+					<view class="index-card__action">去扫码</view>
+				</view>
+				<view class="index-card" @tap="goHotpot('/pages-hotpot/bill/bill')">
+					<view class="index-card__main">
+						<view class="index-card__header">
+							<text class="index-card__title">桌次账单</text>
+						</view>
+						<view class="index-card__desc">查看绑定到自己的账单</view>
+					</view>
+					<view class="index-card__action">去查看</view>
+				</view>
 			</view>
 	</view>
   </layout>
@@ -142,6 +169,10 @@ const goScore = () => {
 	uni.navigateTo({
 		url: '/pages-score/scoreproduct/list'
 	})
+}
+
+const goHotpot = (url) => {
+	uni.navigateTo({ url })
 }
 
 
