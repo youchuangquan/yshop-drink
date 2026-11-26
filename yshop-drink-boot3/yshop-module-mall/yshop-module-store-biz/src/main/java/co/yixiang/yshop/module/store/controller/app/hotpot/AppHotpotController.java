@@ -94,6 +94,14 @@ public class AppHotpotController {
                 req.getRequestKey()));
     }
 
+    @PostMapping("/session/dish")
+    @Operation(summary = "点菜。空桌要等这一道菜才占桌并开台")
+    @PreAuthenticated
+    public CommonResult<HotpotSessionResp> orderDish(@Valid @RequestBody AppHotpotCommands.OrderDish req) {
+        return success(hotpotService.orderDish(req.getShopId(), req.getSlotId(), req.getSignCode(), loginUser(),
+                req.getProductId(), req.getQuantity(), req.getVersion(), req.getRequestKey()));
+    }
+
     @PostMapping("/session/pot")
     @Operation(summary = "按门店锅底加价")
     @PreAuthenticated

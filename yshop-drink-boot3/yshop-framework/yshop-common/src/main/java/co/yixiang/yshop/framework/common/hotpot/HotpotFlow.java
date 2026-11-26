@@ -4,6 +4,9 @@ import co.yixiang.yshop.framework.common.order.OrderRequestKeys;
 import co.yixiang.yshop.framework.common.order.PayChannels;
 import co.yixiang.yshop.framework.common.shop.ShopAccess;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -19,7 +22,9 @@ import static co.yixiang.yshop.framework.common.exception.util.ServiceExceptionU
 /**
  * 火锅预约、入座、开台和结账。
  * 预约占的是时段容量，不是桌号。迟到自动取消保持关闭，不编停留时长。
- * 锅底价格只来自本店已有配置。没有接通的收款渠道不能把账单标成已付。
+ * 锅底价格只来自本店已有配置，菜品价格只来自本店在售商品。没有接通的收款渠道不能把账单标成已付。
+ * 顾客看桌或扫码不占桌。顾客占桌只发生在第一道菜下单时。店员可以把预约安排到空桌并开出台次。
+ * 时段起止只给店员看是否已过点，这里不比较时钟，也不因此取消预约或释放容量。
  */
 public final class HotpotFlow {
 
@@ -57,6 +62,7 @@ public final class HotpotFlow {
         public final Map<Long, Table> tables = new LinkedHashMap<>();
         public final Map<Long, Session> sessions = new LinkedHashMap<>();
         public final List<Pot> pots = new ArrayList<>();
+        public final List<MenuDish> menu = new ArrayList<>();
         public final Map<String, RequestUse> requests = new LinkedHashMap<>();
         public boolean mutated;
         private long sequence = 1;
@@ -77,6 +83,8 @@ public final class HotpotFlow {
         public long shopId;
         public int capacity;
         public int occupied;
+        public LocalTime startTime;
+        public LocalTime endTime;
         public int occupiedDelta;
         public boolean persisted;
         public boolean dirty;
@@ -134,8 +142,28 @@ public final class HotpotFlow {
         public SessionStatus status;
         public String requestKey;
         public final List<SessionPot> pots = new ArrayList<>();
+        public final List<SessionDish> dishes = new ArrayList<>();
         public boolean persisted;
         public boolean dirty;
+    }
+
+    public static final class SessionDish {
+        public long id;
+        public long productId;
+        public String name;
+        public int priceFen;
+        public int quantity;
+        public boolean persisted;
+    }
+
+    /**
+     * 本店在售菜。价格是下单时从商品标价折成的分，不在这里另编。
+     */
+    public static final class MenuDish {
+        public long id;
+        public long shopId;
+        public String name;
+        public int priceFen;
     }
 
     public static final class RequestUse {
@@ -203,17 +231,48 @@ public final class HotpotFlow {
     }
 
     /**
-     * 绑定顾客自己的账单。只有开台号。
+     * 绑定顾客自己的账单。应付、明细、状态和版本都来自这一次开台，不在这里另编。
+     * 没有顾客号，也没有让调用方填写的实付金额。
      */
     public static final class BoundBill {
         private final long sessionId;
+        private final int version;
+        private final int payableFen;
+        private final String status;
+        private final List<SessionPot> pots;
+        private final List<SessionDish> dishes;
 
-        public BoundBill(long sessionId) {
-            this.sessionId = sessionId;
+        public BoundBill(Session session) {
+            this.sessionId = session.id;
+            this.version = session.version;
+            this.payableFen = session.payableFen;
+            this.status = session.status.name();
+            this.pots = List.copyOf(session.pots);
+            this.dishes = List.copyOf(session.dishes);
         }
 
         public long sessionId() {
             return sessionId;
+        }
+
+        public int version() {
+            return version;
+        }
+
+        public int payableFen() {
+            return payableFen;
+        }
+
+        public String status() {
+            return status;
+        }
+
+        public List<SessionPot> pots() {
+            return pots;
+        }
+
+        public List<SessionDish> dishes() {
+            return dishes;
         }
     }
 
@@ -250,16 +309,25 @@ public final class HotpotFlow {
     }
 
     public static Slot addSlot(Board board, long shopId, int capacity, long actorUid, String rawKey) {
+        return addSlot(board, shopId, capacity, null, null, actorUid, rawKey);
+    }
+
+    /**
+     * 起止都空表示旧数据没有时刻。只给一边、或同一个键改时刻，都拒绝。
+     * 保存时刻不等于判断迟到，也不会取消预约。
+     */
+    public static Slot addSlot(Board board, long shopId, int capacity, LocalTime start, LocalTime end,
+                               long actorUid, String rawKey) {
         shopId = ShopAccess.requirePositiveShopId(shopId);
-        if (capacity <= 0 || actorUid < 0) {
+        if (capacity <= 0 || actorUid < 0 || (start == null) != (end == null)) {
             throw exception(BAD_REQUEST);
         }
         String key = OrderRequestKeys.require(rawKey);
+        String mark = slotMark(capacity, start, end);
         RequestUse prior = board.requests.get(keyId(shopId, key));
         if (prior != null) {
             rejectOwner(prior, actorUid);
-            if (!"SLOT".equals(prior.action) || prior.resourceId == null
-                    || !Integer.toString(capacity).equals(prior.mark)) {
+            if (!"SLOT".equals(prior.action) || prior.resourceId == null || !mark.equals(prior.mark)) {
                 throw exception(BAD_REQUEST);
             }
             Slot existing = board.slots.get(prior.resourceId);
@@ -273,8 +341,10 @@ public final class HotpotFlow {
         slot.shopId = shopId;
         slot.capacity = capacity;
         slot.occupied = 0;
+        slot.startTime = start;
+        slot.endTime = end;
         board.slots.put(slot.id, slot);
-        remember(board, shopId, actorUid, 0L, "SLOT", key, null, null, null, slot.id, Integer.toString(capacity));
+        remember(board, shopId, actorUid, 0L, "SLOT", key, null, null, null, slot.id, mark);
         touch(board);
         return slot;
     }
@@ -695,7 +765,207 @@ public final class HotpotFlow {
                 || session.shopId != shopId || session.status != SessionStatus.OPEN || session.ownerUid != callerUid) {
             throw exception(NOT_FOUND);
         }
-        return new BoundBill(session.id);
+        return new BoundBill(session);
+    }
+
+    /**
+     * 商品标价折成分。多出来的小数、空价、负价都不收，也不另编一个价。
+     */
+    public static int yuanToFen(BigDecimal yuan) {
+        if (yuan == null || yuan.signum() < 0) {
+            throw exception(BAD_REQUEST);
+        }
+        try {
+            return yuan.movePointRight(2).setScale(0, RoundingMode.UNNECESSARY).intValueExact();
+        } catch (ArithmeticException ex) {
+            throw exception(BAD_REQUEST);
+        }
+    }
+
+    /**
+     * 菜品报价只接受本店、在售、有名称、有标价的商品。另一家店是 403，没有这条商品是 404。
+     */
+    public static MenuDish quoteMenuDish(long shopId, long productId, Long productShopId, String name,
+                                         BigDecimal priceYuan, Integer onShelf) {
+        shopId = ShopAccess.requirePositiveShopId(shopId);
+        if (productId <= 0) {
+            throw exception(BAD_REQUEST);
+        }
+        if (productShopId == null) {
+            throw exception(NOT_FOUND);
+        }
+        if (productShopId != shopId) {
+            throw exception(FORBIDDEN);
+        }
+        if (onShelf == null || onShelf != 1 || name == null || name.trim().isEmpty()) {
+            throw exception(BAD_REQUEST);
+        }
+        MenuDish dish = new MenuDish();
+        dish.id = productId;
+        dish.shopId = shopId;
+        dish.name = name.trim();
+        dish.priceFen = yuanToFen(priceYuan);
+        return dish;
+    }
+
+    /**
+     * 顾客把一道菜下到空桌时才占桌并开台。已经是本人的开台则只加这一行。
+     * 扫码不走这里。没有这道菜、或容量已满时，桌台保持原样。
+     * 追加到已有开台时必须带上当前 version。同一个请求键不会把这道菜记两次。
+     */
+    public static Session orderDish(Board board, long shopId, long slotId, String signCode, long actorUid,
+                                    long productId, int quantity, Integer version, String rawKey) {
+        shopId = ShopAccess.requirePositiveShopId(shopId);
+        if (actorUid <= 0 || slotId <= 0 || productId <= 0 || quantity <= 0) {
+            throw exception(BAD_REQUEST);
+        }
+        Slot slot = requireSlot(board, shopId, slotId);
+        Table table = requireTable(board, shopId, signCode);
+        MenuDish dish = resolveDish(board, shopId, productId);
+        String mark = productId + "x" + quantity;
+        RequestUse prior = lookup(board, shopId, actorUid, slot.id, rawKey);
+        if (prior != null && prior.mark != null && !mark.equals(prior.mark)) {
+            throw exception(BAD_REQUEST);
+        }
+        if (prior != null && prior.sessionId != null && mark.equals(prior.mark)) {
+            Session existing = board.sessions.get(prior.sessionId);
+            if (existing == null || existing.shopId != shopId || existing.ownerUid != actorUid) {
+                throw exception(BAD_REQUEST);
+            }
+            refuseUnusable(existing);
+            if (existing.tableId != null && existing.tableId != table.id) {
+                throw exception(BAD_REQUEST);
+            }
+            return existing;
+        }
+        if (table.boundUid != null && table.boundUid != actorUid) {
+            throw exception(FORBIDDEN);
+        }
+        if (table.occupied && table.boundUid == null) {
+            throw exception(FORBIDDEN);
+        }
+        Session sitting = sessionOnTable(board, table);
+        if (sitting != null) {
+            if (sitting.shopId != shopId || sitting.ownerUid != actorUid) {
+                throw exception(FORBIDDEN);
+            }
+            return appendDish(board, shopId, slot, table, sitting, actorUid, dish, quantity, version, prior, mark,
+                    OrderRequestKeys.require(rawKey));
+        }
+        Hold cover = cover(board, shopId, slot.id, actorUid, prior);
+        Session already = cover == null ? null : openSessionFor(board, cover.id);
+        if (already != null) {
+            return appendDish(board, shopId, slot, table, already, actorUid, dish, quantity, version, prior, mark,
+                    OrderRequestKeys.require(rawKey));
+        }
+        if (version != null) {
+            throw exception(BAD_REQUEST);
+        }
+        if (cover == null) {
+            if (slot.occupied >= slot.capacity) {
+                throw exception(BAD_REQUEST);
+            }
+            occupy(board, slot, 1);
+            cover = newHold(board, shopId, slot.id, actorUid, OrderRequestKeys.require(rawKey), HoldStatus.SEATED);
+        } else if (cover.status == HoldStatus.HELD) {
+            cover.status = HoldStatus.SEATED;
+            cover.dirty = cover.persisted;
+            touch(board);
+        } else if (cover.status != HoldStatus.SEATED) {
+            throw exception(BAD_REQUEST);
+        }
+        Session session = new Session();
+        session.id = board.nextId();
+        session.shopId = shopId;
+        session.slotId = slot.id;
+        session.holdId = cover.id;
+        session.ownerUid = cover.ownerUid;
+        session.version = 1;
+        session.payableFen = 0;
+        session.paid = false;
+        session.zeroPayReleased = false;
+        session.status = SessionStatus.OPEN;
+        session.requestKey = OrderRequestKeys.require(rawKey);
+        board.sessions.put(session.id, session);
+        bindTable(board, table, actorUid, session.id);
+        session.tableId = table.id;
+        addDishLine(board, session, dish, quantity, false);
+        linkRequest(board, shopId, actorUid, slot.id, "DISH", OrderRequestKeys.require(rawKey), prior,
+                cover.id, session.id, mark);
+        return session;
+    }
+
+    /**
+     * 店员把一条仍占用容量的预约安排到空桌，并开出属于预约人的台次。
+     * 不是散客：预约人 uid 为 0 时拒绝。容量不加第二次。
+     * 已支付、应付为 0 已释放、或不是 OPEN 的台次不能再被当成新开桌。
+     */
+    public static Session seatReservation(Board board, long shopId, long holdId, long slotId, String signCode,
+                                          String rawKey) {
+        shopId = ShopAccess.requirePositiveShopId(shopId);
+        if (holdId <= 0 || slotId <= 0) {
+            throw exception(BAD_REQUEST);
+        }
+        Hold hold = board.holds.get(holdId);
+        if (hold == null) {
+            throw exception(NOT_FOUND);
+        }
+        if (hold.shopId != shopId) {
+            throw exception(FORBIDDEN);
+        }
+        if (hold.slotId != slotId || hold.ownerUid <= 0) {
+            throw exception(BAD_REQUEST);
+        }
+        if (hold.status != HoldStatus.HELD && hold.status != HoldStatus.SEATED) {
+            throw exception(BAD_REQUEST);
+        }
+        Table table = requireTable(board, shopId, signCode);
+        String mark = "table:" + table.signCode;
+        RequestUse prior = lookup(board, shopId, hold.ownerUid, hold.slotId, rawKey);
+        if (prior != null && prior.holdId != null && prior.holdId != hold.id) {
+            throw exception(BAD_REQUEST);
+        }
+        if (prior != null && prior.mark != null && prior.mark.startsWith("table:") && !mark.equals(prior.mark)) {
+            throw exception(BAD_REQUEST);
+        }
+        Session open = openSessionFor(board, hold.id);
+        if (open != null) {
+            refuseUnusable(open);
+            attachOpenTable(board, table, open);
+            markSeated(board, hold);
+            linkRequest(board, shopId, hold.ownerUid, hold.slotId, "SEAT_TABLE", OrderRequestKeys.require(rawKey),
+                    prior, hold.id, open.id, mark);
+            return open;
+        }
+        Session closed = anySessionFor(board, hold.id);
+        if (closed != null) {
+            refuseUnusable(closed);
+        }
+        if (table.boundUid != null && table.boundUid != hold.ownerUid) {
+            throw exception(FORBIDDEN);
+        }
+        if (table.occupied || table.sessionId != null || table.boundUid != null) {
+            throw exception(BAD_REQUEST);
+        }
+        markSeated(board, hold);
+        Session session = new Session();
+        session.id = board.nextId();
+        session.shopId = shopId;
+        session.slotId = hold.slotId;
+        session.holdId = hold.id;
+        session.tableId = table.id;
+        session.ownerUid = hold.ownerUid;
+        session.version = 1;
+        session.payableFen = 0;
+        session.paid = false;
+        session.zeroPayReleased = false;
+        session.status = SessionStatus.OPEN;
+        session.requestKey = OrderRequestKeys.require(rawKey);
+        board.sessions.put(session.id, session);
+        bindTable(board, table, hold.ownerUid, session.id);
+        linkRequest(board, shopId, hold.ownerUid, hold.slotId, "SEAT_TABLE", session.requestKey, prior,
+                hold.id, session.id, mark);
+        return session;
     }
 
     public static PublicScan scan(Board board, long shopId, String signCode) {
@@ -935,10 +1205,170 @@ public final class HotpotFlow {
         for (SessionPot line : session.pots) {
             sum += line.priceFen;
         }
+        for (SessionDish line : session.dishes) {
+            long row = (long) line.priceFen * line.quantity;
+            if (row < 0) {
+                throw exception(BAD_REQUEST);
+            }
+            sum += row;
+        }
         if (sum > Integer.MAX_VALUE) {
             throw exception(BAD_REQUEST);
         }
         return (int) sum;
+    }
+
+    private static Session appendDish(Board board, long shopId, Slot slot, Table table, Session session, long actorUid,
+                                      MenuDish dish, int quantity, Integer version, RequestUse prior, String mark,
+                                      String requestKey) {
+        refuseUnusable(session);
+        if (session.ownerUid != actorUid || session.slotId != slot.id) {
+            throw exception(BAD_REQUEST);
+        }
+        if (version == null || session.version != version) {
+            throw exception(BAD_REQUEST);
+        }
+        if (session.tableId != null && session.tableId != table.id) {
+            throw exception(BAD_REQUEST);
+        }
+        if (session.tableId == null) {
+            if (table.occupied && (table.boundUid == null || table.boundUid != actorUid || table.sessionId != null)) {
+                throw exception(BAD_REQUEST);
+            }
+            bindTable(board, table, actorUid, session.id);
+            session.tableId = table.id;
+            session.dirty = session.persisted;
+        }
+        addDishLine(board, session, dish, quantity, true);
+        linkRequest(board, shopId, actorUid, slot.id, "DISH", requestKey, prior, session.holdId, session.id, mark);
+        return session;
+    }
+
+    private static void addDishLine(Board board, Session session, MenuDish dish, int quantity, boolean bumpVersion) {
+        SessionDish line = new SessionDish();
+        line.id = board.nextId();
+        line.productId = dish.id;
+        line.name = dish.name;
+        line.priceFen = dish.priceFen;
+        line.quantity = quantity;
+        session.dishes.add(line);
+        session.payableFen = payable(session);
+        if (bumpVersion) {
+            session.version = session.version + 1;
+        }
+        session.dirty = session.persisted;
+        touch(board);
+    }
+
+    private static void linkRequest(Board board, long shopId, long ownerUid, long slotId, String action, String key,
+                                    RequestUse prior, Long holdId, long sessionId, String mark) {
+        if (prior == null) {
+            remember(board, shopId, ownerUid, slotId, action, key, holdId, sessionId, null, null, mark);
+            return;
+        }
+        boolean changed = false;
+        if (prior.holdId == null || !prior.holdId.equals(holdId)) {
+            prior.holdId = holdId;
+            changed = true;
+        }
+        if (prior.sessionId == null || prior.sessionId != sessionId) {
+            prior.sessionId = sessionId;
+            changed = true;
+        }
+        if (prior.mark == null) {
+            prior.mark = mark;
+            changed = true;
+        }
+        if (changed) {
+            prior.dirty = prior.persisted;
+            touch(board);
+        }
+    }
+
+    private static void attachOpenTable(Board board, Table table, Session session) {
+        if (session.tableId != null && session.tableId != table.id) {
+            throw exception(BAD_REQUEST);
+        }
+        if (table.sessionId != null && table.sessionId != session.id) {
+            throw exception(BAD_REQUEST);
+        }
+        if (table.boundUid != null && table.boundUid != session.ownerUid) {
+            throw exception(FORBIDDEN);
+        }
+        if (table.occupied && table.sessionId == null) {
+            throw exception(BAD_REQUEST);
+        }
+        if (session.tableId == null) {
+            if (table.occupied) {
+                throw exception(BAD_REQUEST);
+            }
+            bindTable(board, table, session.ownerUid, session.id);
+            session.tableId = table.id;
+            session.dirty = session.persisted;
+            touch(board);
+        }
+    }
+
+    private static void markSeated(Board board, Hold hold) {
+        if (hold.status == HoldStatus.HELD) {
+            hold.status = HoldStatus.SEATED;
+            hold.dirty = hold.persisted;
+            touch(board);
+        }
+    }
+
+    private static Session sessionOnTable(Board board, Table table) {
+        if (table.sessionId == null) {
+            return null;
+        }
+        return board.sessions.get(table.sessionId);
+    }
+
+    private static Session anySessionFor(Board board, long holdId) {
+        for (Session session : board.sessions.values()) {
+            if (session.holdId != null && session.holdId == holdId) {
+                return session;
+            }
+        }
+        return null;
+    }
+
+    private static void refuseUnusable(Session session) {
+        if (session.paid || session.zeroPayReleased || session.status != SessionStatus.OPEN) {
+            throw exception(BAD_REQUEST);
+        }
+    }
+
+    private static MenuDish resolveDish(Board board, long shopId, long productId) {
+        boolean otherShop = false;
+        MenuDish matched = null;
+        for (MenuDish dish : board.menu) {
+            if (dish.id != productId) {
+                continue;
+            }
+            if (dish.shopId == shopId) {
+                matched = dish;
+            } else {
+                otherShop = true;
+            }
+        }
+        if (matched == null) {
+            if (otherShop) {
+                throw exception(FORBIDDEN);
+            }
+            throw exception(BAD_REQUEST);
+        }
+        if (matched.priceFen < 0 || matched.name == null || matched.name.isEmpty()) {
+            throw exception(BAD_REQUEST);
+        }
+        return matched;
+    }
+
+    private static String slotMark(int capacity, LocalTime start, LocalTime end) {
+        if (start == null || end == null) {
+            return Integer.toString(capacity);
+        }
+        return capacity + "|" + start + "|" + end;
     }
 
     private static void rejectOwner(RequestUse prior, long actorUid) {

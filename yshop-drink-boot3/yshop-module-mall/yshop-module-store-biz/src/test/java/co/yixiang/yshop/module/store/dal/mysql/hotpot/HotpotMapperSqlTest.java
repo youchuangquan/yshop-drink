@@ -22,13 +22,28 @@ class HotpotMapperSqlTest {
         assertShopSql(HotpotSessionMapper.class.getMethod("updateSession", Long.class, Long.class, Long.class,
                 Long.class, int.class, int.class, int.class, String.class));
         assertShopSql(HotpotSessionPotMapper.class.getMethod("selectByShop", Long.class));
+        assertShopSql(HotpotSessionDishMapper.class.getMethod("selectByShop", Long.class));
         assertShopSql(ShopPotMapper.class.getMethod("selectByShop", Long.class));
         assertShopSql(HotpotRequestMapper.class.getMethod("selectByShop", Long.class));
         assertShopSql(HotpotRequestMapper.class.getMethod("updateLinks", Long.class, Long.class, Long.class,
-                Long.class, Long.class));
+                Long.class, Long.class, String.class));
 
         String occupy = sql(HotpotSlotMapper.class.getMethod("addOccupied", Long.class, Long.class, int.class));
         assertTrue(occupy.contains("occupied + #{delta} <= capacity"));
+        String slots = sql(HotpotSlotMapper.class.getMethod("selectByShop", Long.class));
+        assertTrue(slots.contains("start_time"));
+        assertTrue(slots.contains("end_time"));
+        String menu = sql(HotpotMenuDishMapper.class.getMethod("selectByProductId", Long.class));
+        assertTrue(menu.contains("shop_id"));
+        assertTrue(menu.contains("store_name"));
+        assertTrue(menu.contains("price"));
+        assertTrue(menu.contains("is_show"));
+        assertFalse(menu.contains("vip_price"));
+        assertFalse(menu.contains("select *"));
+        String dishes = sql(HotpotSessionDishMapper.class.getMethod("selectByShop", Long.class));
+        assertTrue(dishes.contains("price_fen"));
+        assertTrue(dishes.contains("product_id"));
+        assertFalse(dishes.contains("paid"));
         String sessionUpdate = sql(HotpotSessionMapper.class.getMethod("updateSession", Long.class, Long.class,
                 Long.class, Long.class, int.class, int.class, int.class, String.class));
         assertFalse(sessionUpdate.contains("paid"));

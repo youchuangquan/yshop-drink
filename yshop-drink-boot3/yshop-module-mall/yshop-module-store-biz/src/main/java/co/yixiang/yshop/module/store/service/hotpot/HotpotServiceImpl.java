@@ -12,15 +12,19 @@ import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotSessionResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotSlotResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotTableResp;
 import co.yixiang.yshop.module.store.dal.dataobject.hotpot.HotpotHoldDO;
+import co.yixiang.yshop.module.store.dal.dataobject.hotpot.HotpotMenuDishRow;
 import co.yixiang.yshop.module.store.dal.dataobject.hotpot.HotpotRequestDO;
 import co.yixiang.yshop.module.store.dal.dataobject.hotpot.HotpotSessionDO;
+import co.yixiang.yshop.module.store.dal.dataobject.hotpot.HotpotSessionDishDO;
 import co.yixiang.yshop.module.store.dal.dataobject.hotpot.HotpotSessionPotDO;
 import co.yixiang.yshop.module.store.dal.dataobject.hotpot.HotpotSlotDO;
 import co.yixiang.yshop.module.store.dal.dataobject.hotpot.HotpotTableDO;
 import co.yixiang.yshop.module.store.dal.dataobject.hotpot.ShopPotDO;
 import co.yixiang.yshop.module.store.dal.mysql.hotpot.HotpotHoldMapper;
+import co.yixiang.yshop.module.store.dal.mysql.hotpot.HotpotMenuDishMapper;
 import co.yixiang.yshop.module.store.dal.mysql.hotpot.HotpotRequestMapper;
 import co.yixiang.yshop.module.store.dal.mysql.hotpot.HotpotSessionMapper;
+import co.yixiang.yshop.module.store.dal.mysql.hotpot.HotpotSessionDishMapper;
 import co.yixiang.yshop.module.store.dal.mysql.hotpot.HotpotSessionPotMapper;
 import co.yixiang.yshop.module.store.dal.mysql.hotpot.HotpotSlotMapper;
 import co.yixiang.yshop.module.store.dal.mysql.hotpot.HotpotTableMapper;
@@ -30,6 +34,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.DateTimeException;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -43,6 +50,8 @@ import static co.yixiang.yshop.framework.common.exception.util.ServiceExceptionU
 @Service
 public class HotpotServiceImpl implements HotpotService {
 
+    private static final DateTimeFormatter SLOT_TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
+
     @Resource
     private HotpotSlotMapper slotMapper;
     @Resource
@@ -54,6 +63,10 @@ public class HotpotServiceImpl implements HotpotService {
     @Resource
     private HotpotSessionPotMapper sessionPotMapper;
     @Resource
+    private HotpotSessionDishMapper sessionDishMapper;
+    @Resource
+    private HotpotMenuDishMapper menuDishMapper;
+    @Resource
     private ShopPotMapper potMapper;
     @Resource
     private HotpotRequestMapper requestMapper;
@@ -61,10 +74,13 @@ public class HotpotServiceImpl implements HotpotService {
     private PlatformTransactionManager transactionManager;
 
     @Override
-    public HotpotSlotResp createSlot(long shopId, long actorUid, int capacity, String requestKey) {
+    public HotpotSlotResp createSlot(long shopId, long actorUid, int capacity, String startTime, String endTime,
+                                     String requestKey) {
         long shop = ShopAccess.requirePositiveShopId(shopId);
+        LocalTime start = parseSlotTime(startTime);
+        LocalTime end = parseSlotTime(endTime);
         HotpotFlow.Slot slot = write(shop, requestKey,
-                (board, key) -> HotpotFlow.addSlot(board, shop, capacity, actorUid, key));
+                (board, key) -> HotpotFlow.addSlot(board, shop, capacity, start, end, actorUid, key));
         return toSlot(slot);
     }
 
@@ -102,6 +118,8 @@ public class HotpotServiceImpl implements HotpotService {
             slot.shopId = row.getShopId();
             slot.capacity = row.getCapacity() == null ? 0 : row.getCapacity();
             slot.occupied = row.getOccupied() == null ? 0 : row.getOccupied();
+            slot.startTime = row.getStartTime();
+            slot.endTime = row.getEndTime();
             board.slots.put(slot.id, slot);
         }
         for (HotpotFlow.Slot slot : HotpotFlow.slotsOf(board, shop)) {
@@ -133,6 +151,28 @@ public class HotpotServiceImpl implements HotpotService {
         HotpotFlow.BoundBill bill = HotpotFlow.boundBill(load(shop), shop, signCode, callerUid);
         HotpotBoundBillResp resp = new HotpotBoundBillResp();
         resp.setSessionId(bill.sessionId());
+        resp.setVersion(bill.version());
+        resp.setPayableFen(bill.payableFen());
+        resp.setStatus(bill.status());
+        List<HotpotBoundBillResp.PotLine> pots = new ArrayList<>();
+        for (HotpotFlow.SessionPot pot : bill.pots()) {
+            HotpotBoundBillResp.PotLine line = new HotpotBoundBillResp.PotLine();
+            line.setPotId(pot.potId);
+            line.setName(pot.name);
+            line.setPriceFen(pot.priceFen);
+            pots.add(line);
+        }
+        resp.setPots(pots);
+        List<HotpotBoundBillResp.DishLine> dishes = new ArrayList<>();
+        for (HotpotFlow.SessionDish dish : bill.dishes()) {
+            HotpotBoundBillResp.DishLine line = new HotpotBoundBillResp.DishLine();
+            line.setProductId(dish.productId);
+            line.setName(dish.name);
+            line.setPriceFen(dish.priceFen);
+            line.setQuantity(dish.quantity);
+            dishes.add(line);
+        }
+        resp.setDishes(dishes);
         return resp;
     }
 
@@ -240,6 +280,38 @@ public class HotpotServiceImpl implements HotpotService {
     }
 
     @Override
+    public HotpotSessionResp orderDish(long shopId, long slotId, String signCode, long actorUid, long productId,
+                                       int quantity, Integer version, String requestKey) {
+        long shop = ShopAccess.requirePositiveShopId(shopId);
+        if (actorUid <= 0 || quantity <= 0) {
+            throw exception(BAD_REQUEST);
+        }
+        assertSlotShop(slotId, shop);
+        HotpotFlow.MenuDish quoted = quoteDish(shop, productId);
+        HotpotFlow.Session session = write(shop, requestKey, (board, key) -> {
+            board.menu.add(quoted);
+            return HotpotFlow.orderDish(board, shop, slotId, signCode, actorUid, productId, quantity, version, key);
+        });
+        return toSession(session, Boolean.FALSE, null);
+    }
+
+    @Override
+    public HotpotSessionResp seatReservation(long shopId, long holdId, long slotId, String signCode, String requestKey) {
+        long shop = ShopAccess.requirePositiveShopId(shopId);
+        HotpotHoldDO row = holdMapper.selectByHoldId(holdId);
+        if (row == null || row.getShopId() == null) {
+            throw exception(NOT_FOUND);
+        }
+        ShopAccess.assertSameShop(row.getShopId(), shop);
+        if (row.getOwnerUid() == null || row.getOwnerUid() <= 0 || row.getSlotId() == null || row.getSlotId() != slotId) {
+            throw exception(BAD_REQUEST);
+        }
+        HotpotFlow.Session session = write(shop, requestKey,
+                (board, key) -> HotpotFlow.seatReservation(board, shop, holdId, slotId, signCode, key));
+        return toSession(session, Boolean.FALSE, null);
+    }
+
+    @Override
     public HotpotSessionResp addPot(long shopId, long sessionId, long potId, int version, long actorUid, boolean staff,
                                     String requestKey) {
         long shop = ShopAccess.requirePositiveShopId(shopId);
@@ -344,6 +416,8 @@ public class HotpotServiceImpl implements HotpotService {
                 slot.shopId = row.getShopId();
                 slot.capacity = row.getCapacity() == null ? 0 : row.getCapacity();
                 slot.occupied = row.getOccupied() == null ? 0 : row.getOccupied();
+                slot.startTime = row.getStartTime();
+                slot.endTime = row.getEndTime();
                 slot.persisted = true;
                 board.slots.put(slot.id, slot);
                 board.noteId(slot.id);
@@ -445,6 +519,27 @@ public class HotpotServiceImpl implements HotpotService {
                 board.noteId(line.id);
             }
         }
+        List<HotpotSessionDishDO> dishes = sessionDishMapper.selectByShop(shopId);
+        if (dishes != null) {
+            for (HotpotSessionDishDO row : dishes) {
+                if (row.getShopId() == null || row.getShopId() != shopId || row.getSessionId() == null) {
+                    continue;
+                }
+                HotpotFlow.Session session = board.sessions.get(row.getSessionId());
+                if (session == null) {
+                    continue;
+                }
+                HotpotFlow.SessionDish line = new HotpotFlow.SessionDish();
+                line.id = row.getId() == null ? 0L : row.getId();
+                line.productId = row.getProductId() == null ? 0L : row.getProductId();
+                line.name = row.getName();
+                line.priceFen = row.getPriceFen() == null ? 0 : row.getPriceFen();
+                line.quantity = row.getQuantity() == null ? 0 : row.getQuantity();
+                line.persisted = true;
+                session.dishes.add(line);
+                board.noteId(line.id);
+            }
+        }
         List<HotpotRequestDO> requests = requestMapper.selectByShop(shopId);
         if (requests != null) {
             for (HotpotRequestDO row : requests) {
@@ -486,6 +581,7 @@ public class HotpotServiceImpl implements HotpotService {
         pointSessions(board, sessionIds);
         updateDirty(board);
         insertSessionPots(board);
+        insertSessionDishes(board);
         saveRequests(board);
         board.mutated = false;
     }
@@ -501,6 +597,8 @@ public class HotpotServiceImpl implements HotpotService {
             row.setShopId(slot.shopId);
             row.setCapacity(slot.capacity);
             row.setOccupied(slot.occupied);
+            row.setStartTime(slot.startTime);
+            row.setEndTime(slot.endTime);
             slotMapper.insert(row);
             ids.put(previous, row.getId());
             slot.id = row.getId();
@@ -662,6 +760,26 @@ public class HotpotServiceImpl implements HotpotService {
         }
     }
 
+    private void insertSessionDishes(HotpotFlow.Board board) {
+        for (HotpotFlow.Session session : board.sessions.values()) {
+            for (HotpotFlow.SessionDish line : session.dishes) {
+                if (line.persisted) {
+                    continue;
+                }
+                HotpotSessionDishDO row = new HotpotSessionDishDO();
+                row.setShopId(session.shopId);
+                row.setSessionId(session.id);
+                row.setProductId(line.productId);
+                row.setName(line.name);
+                row.setPriceFen(line.priceFen);
+                row.setQuantity(line.quantity);
+                sessionDishMapper.insert(row);
+                line.id = row.getId();
+                line.persisted = true;
+            }
+        }
+    }
+
     private void saveRequests(HotpotFlow.Board board) {
         for (HotpotFlow.RequestUse use : board.requests.values()) {
             if (!use.persisted) {
@@ -681,7 +799,7 @@ public class HotpotServiceImpl implements HotpotService {
                 use.persisted = true;
                 use.dirty = false;
             } else if (use.dirty) {
-                if (requestMapper.updateLinks(use.id, use.shopId, use.holdId, use.sessionId, use.potId) != 1) {
+                if (requestMapper.updateLinks(use.id, use.shopId, use.holdId, use.sessionId, use.potId, use.mark) != 1) {
                     throw exception(BAD_REQUEST);
                 }
                 use.dirty = false;
@@ -778,6 +896,8 @@ public class HotpotServiceImpl implements HotpotService {
         resp.setSessionId(session.id);
         resp.setShopId(session.shopId);
         resp.setSlotId(session.slotId);
+        resp.setHoldId(session.holdId);
+        resp.setOwnerUid(session.ownerUid);
         resp.setVersion(session.version);
         resp.setPayableFen(session.payableFen);
         resp.setStatus(session.status.name());
@@ -794,6 +914,16 @@ public class HotpotServiceImpl implements HotpotService {
             lines.add(line);
         }
         resp.setPots(lines);
+        List<HotpotSessionResp.DishLine> dishes = new ArrayList<>();
+        for (HotpotFlow.SessionDish dish : session.dishes) {
+            HotpotSessionResp.DishLine line = new HotpotSessionResp.DishLine();
+            line.setProductId(dish.productId);
+            line.setName(dish.name);
+            line.setPriceFen(dish.priceFen);
+            line.setQuantity(dish.quantity);
+            dishes.add(line);
+        }
+        resp.setDishes(dishes);
         return resp;
     }
 
@@ -803,7 +933,40 @@ public class HotpotServiceImpl implements HotpotService {
         resp.setShopId(slot.shopId);
         resp.setCapacity(slot.capacity);
         resp.setOccupied(slot.occupied);
+        if (slot.startTime != null) {
+            resp.setStartTime(slot.startTime.format(SLOT_TIME));
+        }
+        if (slot.endTime != null) {
+            resp.setEndTime(slot.endTime.format(SLOT_TIME));
+        }
         return resp;
+    }
+
+    private HotpotFlow.MenuDish quoteDish(long shopId, long productId) {
+        if (productId <= 0) {
+            throw exception(BAD_REQUEST);
+        }
+        HotpotMenuDishRow row = menuDishMapper.selectByProductId(productId);
+        return HotpotFlow.quoteMenuDish(shopId, productId,
+                row == null ? null : row.getShopId(),
+                row == null ? null : row.getStoreName(),
+                row == null ? null : row.getPrice(),
+                row == null ? null : row.getIsShow());
+    }
+
+    private static LocalTime parseSlotTime(String raw) {
+        if (raw == null || raw.trim().isEmpty()) {
+            throw exception(BAD_REQUEST);
+        }
+        String text = raw.trim();
+        try {
+            if (text.length() == 5) {
+                return LocalTime.parse(text, DateTimeFormatter.ofPattern("HH:mm"));
+            }
+            return LocalTime.parse(text, DateTimeFormatter.ofPattern("HH:mm:ss"));
+        } catch (DateTimeException ex) {
+            throw exception(BAD_REQUEST);
+        }
     }
 
     private static HotpotTableResp toTable(HotpotFlow.Table table) {

@@ -1,5 +1,6 @@
 package co.yixiang.yshop.module.store.controller.app.hotpot.vo;
 
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
@@ -96,6 +97,32 @@ public final class AppHotpotCommands {
         private Long potId;
 
         @NotNull
+        private Integer version;
+
+        @NotBlank
+        private String requestKey;
+
+    }
+
+    @Data
+    public static class OrderDish {
+
+        @NotNull
+        private Long shopId;
+
+        @NotNull
+        private Long slotId;
+
+        @NotBlank
+        private String signCode;
+
+        @NotNull
+        private Long productId;
+
+        @NotNull
+        @Min(1)
+        private Integer quantity;
+
         private Integer version;
 
         @NotBlank

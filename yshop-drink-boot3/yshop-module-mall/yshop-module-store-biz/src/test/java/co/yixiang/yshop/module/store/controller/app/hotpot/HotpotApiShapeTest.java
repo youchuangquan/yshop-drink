@@ -15,6 +15,7 @@ import co.yixiang.yshop.module.store.service.hotpot.HotpotService;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
 import java.lang.reflect.Field;
@@ -75,9 +76,20 @@ class HotpotApiShapeTest {
 
     @Test
     void queryApisStayOnTheConfirmedShapes() throws Exception {
-        assertEquals(List.of("slotId", "shopId", "capacity", "occupied"), names(HotpotSlotResp.class));
+        assertEquals(List.of("slotId", "shopId", "capacity", "occupied", "startTime", "endTime"),
+                names(HotpotSlotResp.class));
         assertEquals(List.of("id", "slotId", "shopId", "uid", "status", "sessionId"), names(HotpotStaffHoldResp.class));
-        assertEquals(List.of("sessionId"), names(HotpotBoundBillResp.class));
+        assertEquals(List.of("sessionId", "version", "payableFen", "status", "pots", "dishes"),
+                names(HotpotBoundBillResp.class));
+        assertEquals(List.of("holdId", "slotId", "signCode", "requestKey"),
+                names(AdminHotpotCommands.ReservationSeat.class));
+        assertEquals(List.of("shopId", "slotId", "signCode", "productId", "quantity", "version", "requestKey"),
+                names(AppHotpotCommands.OrderDish.class));
+        for (String forbidden : new String[]{"phone", "owner", "paidfen", "amount", "duration", "retain"}) {
+            for (Field field : HotpotBoundBillResp.class.getDeclaredFields()) {
+                assertFalse(field.getName().toLowerCase().contains(forbidden), field.getName());
+            }
+        }
         for (String forbidden : new String[]{"requestkey", "name", "phone", "party", "arrival", "tabletype"}) {
             for (Field field : HotpotStaffHoldResp.class.getDeclaredFields()) {
                 assertFalse(field.getName().toLowerCase().contains(forbidden));
@@ -97,6 +109,16 @@ class HotpotApiShapeTest {
 
         Method scan = AppHotpotController.class.getMethod("scan", Long.class, String.class);
         assertNull(scan.getAnnotation(PreAuthenticated.class));
+
+        Method dish = AppHotpotController.class.getMethod("orderDish", AppHotpotCommands.OrderDish.class);
+        assertNotNull(dish.getAnnotation(PreAuthenticated.class));
+        assertEquals("/session/dish", dish.getAnnotation(PostMapping.class).value()[0]);
+
+        Method seatReservation = AdminHotpotController.class.getMethod("seatReservation",
+                AdminHotpotCommands.ReservationSeat.class);
+        assertNotNull(seatReservation.getAnnotation(PreAuthorize.class));
+        assertEquals("/reservation/seat", seatReservation.getAnnotation(PostMapping.class).value()[0]);
+        assertEquals(1, seatReservation.getParameterCount());
 
         Method holds = AdminHotpotController.class.getMethod("listHolds");
         assertNotNull(holds.getAnnotation(PreAuthorize.class));

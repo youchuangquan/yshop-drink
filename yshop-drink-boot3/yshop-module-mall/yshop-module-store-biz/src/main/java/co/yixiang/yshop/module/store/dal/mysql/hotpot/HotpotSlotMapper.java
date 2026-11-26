@@ -12,7 +12,7 @@ import java.util.List;
 @Mapper
 public interface HotpotSlotMapper extends BaseMapperX<HotpotSlotDO> {
 
-    @Select("select id, shop_id, capacity, occupied from yshop_hotpot_slot where deleted = 0 and shop_id = #{shopId}")
+    @Select("select id, shop_id, capacity, occupied, start_time, end_time from yshop_hotpot_slot where deleted = 0 and shop_id = #{shopId}")
     List<HotpotSlotDO> selectByShop(@Param("shopId") Long shopId);
 
     @Select("select shop_id from yshop_hotpot_slot where deleted = 0 and id = #{id}")
