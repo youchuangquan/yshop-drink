@@ -3,7 +3,9 @@ package co.yixiang.yshop.module.store.service.hotpot;
 import co.yixiang.yshop.framework.common.hotpot.HotpotFlow;
 import co.yixiang.yshop.framework.common.order.OrderRequestGate;
 import co.yixiang.yshop.framework.common.shop.ShopAccess;
+import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotBoundBillResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotHoldResp;
+import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotStaffHoldResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotPotResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotScanResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotSessionResp;
@@ -90,18 +92,48 @@ public class HotpotServiceImpl implements HotpotService {
         if (rows == null) {
             return result;
         }
+        HotpotFlow.Board board = new HotpotFlow.Board();
         for (HotpotSlotDO row : rows) {
-            if (row.getShopId() == null || row.getShopId() != shop) {
+            if (row.getId() == null || row.getShopId() == null) {
                 continue;
             }
-            HotpotSlotResp item = new HotpotSlotResp();
-            item.setSlotId(row.getId());
-            item.setShopId(row.getShopId());
-            item.setCapacity(row.getCapacity());
-            item.setOccupied(row.getOccupied());
+            HotpotFlow.Slot slot = new HotpotFlow.Slot();
+            slot.id = row.getId();
+            slot.shopId = row.getShopId();
+            slot.capacity = row.getCapacity() == null ? 0 : row.getCapacity();
+            slot.occupied = row.getOccupied() == null ? 0 : row.getOccupied();
+            board.slots.put(slot.id, slot);
+        }
+        for (HotpotFlow.Slot slot : HotpotFlow.slotsOf(board, shop)) {
+            result.add(toSlot(slot));
+        }
+        return result;
+    }
+
+    @Override
+    public List<HotpotStaffHoldResp> listCurrentHolds(long shopId) {
+        long shop = ShopAccess.requirePositiveShopId(shopId);
+        List<HotpotStaffHoldResp> result = new ArrayList<>();
+        for (HotpotFlow.StaffHold row : HotpotFlow.currentHolds(load(shop), shop)) {
+            HotpotStaffHoldResp item = new HotpotStaffHoldResp();
+            item.setId(row.id());
+            item.setSlotId(row.slotId());
+            item.setShopId(row.shopId());
+            item.setUid(row.uid());
+            item.setStatus(row.status().name());
+            item.setSessionId(row.sessionId());
             result.add(item);
         }
         return result;
+    }
+
+    @Override
+    public HotpotBoundBillResp boundBill(long shopId, String signCode, long callerUid) {
+        long shop = ShopAccess.requirePositiveShopId(shopId);
+        HotpotFlow.BoundBill bill = HotpotFlow.boundBill(load(shop), shop, signCode, callerUid);
+        HotpotBoundBillResp resp = new HotpotBoundBillResp();
+        resp.setSessionId(bill.sessionId());
+        return resp;
     }
 
     @Override
