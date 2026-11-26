@@ -16,6 +16,10 @@ export function hotpotScan(shopId, signCode) {
   return api.get('/hotpot/scan', { shopId, signCode }, { login: false })
 }
 
+export function hotpotDish(data) {
+  return api.post('/hotpot/session/dish', data, { login: true })
+}
+
 export function hotpotBill(shopId, signCode) {
   return api.get('/hotpot/bill', { shopId, signCode }, { login: true })
 }
