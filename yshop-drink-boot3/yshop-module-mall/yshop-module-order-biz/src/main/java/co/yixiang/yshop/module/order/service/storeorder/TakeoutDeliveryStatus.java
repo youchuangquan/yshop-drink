@@ -9,8 +9,8 @@ import static co.yixiang.yshop.module.order.enums.ErrorCodeConstants.ORDER_STATU
 import static co.yixiang.yshop.framework.common.exception.util.ServiceExceptionUtil.exception;
 
 /**
- * 外卖履约进度只认订单 status。合法迁移是 0→1 和 1→2。
- * 同一个请求键再打到同一个目标上是重放，不再写状态，也不再写操作记录。
+ * 外卖履约进度只认订单 status。新写入只允许 0→1 和 1→2。
+ * 订单已经停在 1 或 2 时，再请求同一个状态是重放，没有请求键也一样，不再写操作记录。
  */
 public final class TakeoutDeliveryStatus {
 
@@ -113,8 +113,13 @@ public final class TakeoutDeliveryStatus {
                 || !OrderInfoEnum.PAY_STATUS_1.getValue().equals(order.paid)
                 || !OrderInfoEnum.REFUND_STATUS_0.getValue().equals(order.refundStatus)
                 || order.status == null
-                || !allowedTarget(target)
-                || !legal(order.status, target)) {
+                || !allowedTarget(target)) {
+            throw exception(ORDER_STATUS_ERROR);
+        }
+        if (order.status == target) {
+            return new Move(Effect.REPLAY, order.status, target, key);
+        }
+        if (!legal(order.status, target)) {
             throw exception(ORDER_STATUS_ERROR);
         }
         return new Move(Effect.APPLY, order.status, target, key);

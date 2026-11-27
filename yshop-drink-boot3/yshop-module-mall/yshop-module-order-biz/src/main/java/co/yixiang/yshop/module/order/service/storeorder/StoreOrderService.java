@@ -31,8 +31,9 @@ public interface StoreOrderService {
 
     /**
      * 店员更新本店外卖的履约状态。顾客不能写。只允许 0→1 和 1→2。
+     * 已经停在目标状态时直接返回当前订单，不再写操作记录。
      */
-    void updateDeliveryStatus(@Valid StoreOrderDeliveryStatusReqVO reqVO);
+    StoreOrderRespVO updateDeliveryStatus(@Valid StoreOrderDeliveryStatusReqVO reqVO);
 
     /**
      * 删除订单

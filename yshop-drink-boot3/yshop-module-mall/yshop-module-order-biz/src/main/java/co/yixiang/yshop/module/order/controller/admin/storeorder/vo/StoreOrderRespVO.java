@@ -4,6 +4,7 @@ import co.yixiang.yshop.module.member.controller.admin.user.vo.UserRespVO;
 import co.yixiang.yshop.module.order.dal.dataobject.storeordercartinfo.StoreOrderCartInfoDO;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.*;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -27,6 +28,9 @@ public class StoreOrderRespVO extends StoreOrderBaseVO {
 
     @Schema(description = "订单状态", required = true)
     private String StatusStr;
+
+    @Schema(description = "打包费")
+    private BigDecimal packingPrice;
 
 
 

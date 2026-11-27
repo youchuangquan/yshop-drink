@@ -71,6 +71,8 @@ class TakeoutDeliverySqlTest {
         assertEquals("/order/store-order",
                 StoreOrderController.class.getAnnotation(RequestMapping.class).value()[0]);
         assertTrue(StoreOrderController.class.getName().contains(".controller.admin."));
+        assertTrue(method.getGenericReturnType().getTypeName().contains("StoreOrderRespVO"));
+        assertFalse(method.getGenericReturnType().getTypeName().contains("Boolean"));
     }
 
 }

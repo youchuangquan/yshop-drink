@@ -1012,7 +1012,11 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
             statusDTO.setType("2");
 
         } else if (OrderInfoEnum.STATUS_2.getValue().equals(order.getStatus())) {
-            statusDTO.setTitle(receivedTitle(order.getOrderType()));
+            if(OrderLogEnum.ORDER_TAKE_OUT.getValue().equals(order.getOrderType())){
+                statusDTO.setTitle("已收货");
+            }else{
+                statusDTO.setTitle("已取餐");
+            }
             statusDTO.setYClass("state-ypj");
             statusDTO.setMsg("已收货,快去评价一下吧");
             statusDTO.setType("3");
@@ -1049,16 +1053,6 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
     }
 
     /**
-     * 外卖 status=2 的顾客标题用「已送达」，其它类型仍是「已取餐」。
-     */
-    static String receivedTitle(String orderType) {
-        if (OrderLogEnum.ORDER_TAKE_OUT.getValue().equals(orderType)) {
-            return "已送达";
-        }
-        return "已取餐";
-    }
-
-    /**
      * 订单确认收货
      *
      * @param orderId 单号
@@ -1068,7 +1062,7 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
     public void takeOrder(String orderId, Long uid, Long shopId) {
         AppStoreOrderQueryVo order = requireCustomerOrder(orderId, uid, shopId);
         if (TakeoutDeliveryStatus.legacyWriteBlocked(order.getOrderType())) {
-            return;
+            throw exception(ORDER_STATUS_ERROR);
         }
 
         if (OrderInfoEnum.PAY_STATUS_0.getValue().equals(order.getPaid())) {

@@ -140,8 +140,8 @@ public class StoreOrderServiceImpl implements StoreOrderService {
         updateObj.setShopId(existing.getShopId());
         boolean takeout = TakeoutDeliveryStatus.legacyWriteBlocked(existing.getOrderType());
         if (takeout) {
-            // 外卖履约状态只能走配送状态接口。请求体里带的 status 不能写进来。
-            updateObj.setStatus(null);
+            // 保留库里的状态。置成 null 再 updateById，字段策略一旦包含 null，就会把 status 写成空。
+            updateObj.setStatus(existing.getStatus());
         }
 
         //发货自取模式 直接收货。以库里的订单类型为准，避免把外卖伪装成自取后收货。
@@ -199,7 +199,7 @@ public class StoreOrderServiceImpl implements StoreOrderService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void updateDeliveryStatus(StoreOrderDeliveryStatusReqVO reqVO) {
+    public StoreOrderRespVO updateDeliveryStatus(StoreOrderDeliveryStatusReqVO reqVO) {
         long shopId = ShopSecurityUtils.currentStaffShop(reqVO.getShopId());
         StoreOrderDO order = requireStaffOrder(reqVO.getId());
         if (reqVO.getStatus() == null) {
@@ -210,22 +210,29 @@ public class StoreOrderServiceImpl implements StoreOrderService {
         TakeoutDeliveryStatus.Move move = TakeoutDeliveryStatus.decide(snapshot(order), shopId,
                 reqVO.getStatus(), reqVO.getRequestKey(), stamp);
         if (move.effect() == TakeoutDeliveryStatus.Effect.REPLAY) {
-            return;
+            return deliveryView(order);
         }
         int rows = storeOrderMapper.updateTakeoutDeliveryStatus(order.getId(), shopId, move.from(), move.to());
         if (rows == 1) {
             storeOrderStatusService.create(order.getUid(), order.getId(), TakeoutDeliveryStatus.CHANGE_TYPE,
                     TakeoutDeliveryStatus.operationMessage(move.to(), move.requestKey()));
-            return;
+            return deliveryView(requireStaffOrder(order.getId()));
         }
         StoreOrderDO again = requireStaffOrder(order.getId());
         TakeoutDeliveryStatus.Stamp stampAgain = findDeliveryStamp(again.getId(), key);
         TakeoutDeliveryStatus.Move second = TakeoutDeliveryStatus.decide(snapshot(again), shopId,
                 reqVO.getStatus(), reqVO.getRequestKey(), stampAgain);
         if (second.effect() == TakeoutDeliveryStatus.Effect.REPLAY) {
-            return;
+            return deliveryView(again);
         }
         throw exception(ORDER_STATUS_ERROR);
+    }
+
+    private StoreOrderRespVO deliveryView(StoreOrderDO order) {
+        StoreOrderRespVO view = StoreOrderConvert.INSTANCE.convert(order);
+        int deleted = view.getIsSystemDel() == null ? 0 : view.getIsSystemDel();
+        view.setStatusStr(handleOrderStatus(view.getPaid(), view.getStatus(), view.getRefundStatus(), deleted));
+        return view;
     }
 
     private TakeoutDeliveryStatus.Stamp findDeliveryStamp(Long orderId, String key) {
@@ -276,7 +283,7 @@ public class StoreOrderServiceImpl implements StoreOrderService {
     public void takeStoreOrder(Long id) {
         StoreOrderDO storeOrderDO = requireStaffOrder(id);
         if (TakeoutDeliveryStatus.legacyWriteBlocked(storeOrderDO.getOrderType())) {
-            return;
+            throw exception(ORDER_STATUS_ERROR);
         }
         appStoreOrderService.takeOrder(storeOrderDO.getOrderId(),storeOrderDO.getUid(), storeOrderDO.getShopId());
     }

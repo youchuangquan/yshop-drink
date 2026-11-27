@@ -8,6 +8,7 @@ import co.yixiang.yshop.framework.common.order.PaymentReconciliation;
 import co.yixiang.yshop.framework.security.core.LoginUser;
 import co.yixiang.yshop.module.member.service.user.MemberUserService;
 import co.yixiang.yshop.module.order.controller.admin.storeorder.vo.StoreOrderDeliveryStatusReqVO;
+import co.yixiang.yshop.module.order.controller.admin.storeorder.vo.StoreOrderRespVO;
 import co.yixiang.yshop.module.order.controller.admin.storeorder.vo.StoreOrderUpdateReqVO;
 import co.yixiang.yshop.module.order.controller.app.order.vo.AppStoreOrderQueryVo;
 import co.yixiang.yshop.module.order.dal.dataobject.storeorder.StoreOrderDO;
@@ -122,8 +123,10 @@ class StoreOrderDeliveryStatusServiceTest {
 
     @Test
     void movesForwardAndSameKeyReplayDoesNotWriteAgain() {
-        service.updateDeliveryStatus(req(1, null, "delivery-key-01"));
-        service.updateDeliveryStatus(req(1, null, "delivery-key-01"));
+        StoreOrderRespVO moved = service.updateDeliveryStatus(req(1, null, "delivery-key-01"));
+        assertDeliveryBody(moved, 1, "待收货");
+        StoreOrderRespVO replay = service.updateDeliveryStatus(req(1, null, "delivery-key-01"));
+        assertDeliveryBody(replay, 1, "待收货");
         assertEquals(1, order.getStatus());
         assertEquals(1, deliveryRecords().size());
         assertTrue(deliveryRecords().get(0).getChangeMessage().startsWith("待收货"));
@@ -167,13 +170,14 @@ class StoreOrderDeliveryStatusServiceTest {
     }
 
     @Test
-    void omittedKeyWritesOnceAndTheNextCallIsNotAReplay() {
+    void missingKeyReplaysSameTargetWithoutAnotherRecord() {
         service.updateDeliveryStatus(req(1, null, null));
-        ServiceException again = assertThrows(ServiceException.class,
-                () -> service.updateDeliveryStatus(req(1, null, null)));
-        assertEquals(ORDER_STATUS_ERROR.getCode(), again.getCode());
-        assertEquals(1, order.getStatus());
-        assertEquals(1, deliveryRecords().size());
+        service.updateDeliveryStatus(req(1, null, null));
+        service.updateDeliveryStatus(req(2, null, null));
+        StoreOrderRespVO again = service.updateDeliveryStatus(req(2, null, null));
+        assertDeliveryBody(again, 2, "待评价");
+        assertEquals(2, order.getStatus());
+        assertEquals(2, deliveryRecords().size());
         assertNull(TakeoutDeliveryStatus.keyOf(deliveryRecords().get(0).getChangeMessage()));
     }
 
@@ -301,16 +305,36 @@ class StoreOrderDeliveryStatusServiceTest {
         assertEquals(0, order.getStatus());
         verify(redissonClient, never()).getBlockingDeque(anyString());
         verify(appStoreOrderService, never()).takeOrder(any(), any(), any());
-        verify(storeOrderMapper).updateById(org.mockito.ArgumentMatchers.argThat(patch -> patch.getStatus() == null));
+        verify(storeOrderMapper).updateById(org.mockito.ArgumentMatchers.argThat(
+                patch -> Integer.valueOf(0).equals(patch.getStatus())));
 
         order.setOrderType(OrderLogEnum.ORDER_TAKE_IN.getValue());
         service.takeStoreOrder(10L);
         verify(appStoreOrderService).takeOrder(order.getOrderId(), order.getUid(), order.getShopId());
 
         order.setOrderType(OrderLogEnum.ORDER_TAKE_OUT.getValue());
-        service.takeStoreOrder(10L);
+        ServiceException denied = assertThrows(ServiceException.class, () -> service.takeStoreOrder(10L));
+        assertEquals(ORDER_STATUS_ERROR.getCode(), denied.getCode());
         verify(appStoreOrderService).takeOrder(order.getOrderId(), order.getUid(), order.getShopId());
         assertEquals(0, order.getStatus());
+    }
+
+    @Test
+    void orderSendKeepsTheStoredTakeoutStatus() {
+        order.setStatus(2);
+        StoreOrderUpdateReqVO send = new StoreOrderUpdateReqVO();
+        send.setId(10L);
+        send.setUpdateType(UpdateOrderEnum.ORDER_SEND.getValue());
+        send.setOrderId(order.getOrderId());
+        service.updateStoreOrder(send);
+
+        org.mockito.ArgumentCaptor<StoreOrderDO> captor = org.mockito.ArgumentCaptor.forClass(StoreOrderDO.class);
+        verify(storeOrderMapper).updateById(captor.capture());
+        assertEquals(Integer.valueOf(2), captor.getValue().getStatus());
+        order.setStatus(captor.getValue().getStatus());
+        assertEquals(Integer.valueOf(2), order.getStatus());
+        assertEquals(OrderInfoEnum.PAY_STATUS_1.getValue(), order.getPaid());
+        assertMoneyAndAddress();
     }
 
     @Test
@@ -339,7 +363,8 @@ class StoreOrderDeliveryStatusServiceTest {
         takeout.setStatus(OrderInfoEnum.STATUS_1.getValue());
         takeout.setOrderType(OrderLogEnum.ORDER_TAKE_OUT.getValue());
         probe.order = takeout;
-        probe.takeOrder("T10001", 42L, 1L);
+        ServiceException denied = assertThrows(ServiceException.class, () -> probe.takeOrder("T10001", 42L, 1L));
+        assertEquals(ORDER_STATUS_ERROR.getCode(), denied.getCode());
         assertEquals(0, probe.updates);
         assertEquals(OrderInfoEnum.STATUS_1.getValue(), takeout.getStatus());
     }
@@ -363,7 +388,23 @@ class StoreOrderDeliveryStatusServiceTest {
         assertEquals(0, PAY_PRICE.compareTo(order.getPayPrice()));
         assertEquals(0, PACKING.compareTo(order.getPackingPrice()));
         assertEquals(0, POSTAGE.compareTo(order.getTotalPostage()));
+        assertEquals(0, POSTAGE.compareTo(order.getPayPostage()));
         assertEquals(ADDRESS, order.getUserAddress());
+    }
+
+    private void assertDeliveryBody(StoreOrderRespVO body, int status, String statusStr) {
+        assertEquals(order.getId(), body.getId());
+        assertEquals(order.getOrderId(), body.getOrderId());
+        assertEquals(order.getOrderType(), body.getOrderType());
+        assertEquals(order.getPaid(), body.getPaid());
+        assertEquals(order.getRefundStatus(), body.getRefundStatus());
+        assertEquals(Integer.valueOf(status), body.getStatus());
+        assertEquals(statusStr, body.getStatusStr());
+        assertEquals(ADDRESS, body.getUserAddress());
+        assertEquals(0, PACKING.compareTo(body.getPackingPrice()));
+        assertEquals(0, POSTAGE.compareTo(body.getPayPostage()));
+        assertEquals(0, PAY_PRICE.compareTo(body.getPayPrice()));
+        assertEquals(order.getShopId(), body.getShopId());
     }
 
     private static StoreOrderDO takeout() {
@@ -380,6 +421,7 @@ class StoreOrderDeliveryStatusServiceTest {
         row.setPayPrice(PAY_PRICE);
         row.setPackingPrice(PACKING);
         row.setTotalPostage(POSTAGE);
+        row.setPayPostage(POSTAGE);
         row.setUserAddress(ADDRESS);
         return row;
     }

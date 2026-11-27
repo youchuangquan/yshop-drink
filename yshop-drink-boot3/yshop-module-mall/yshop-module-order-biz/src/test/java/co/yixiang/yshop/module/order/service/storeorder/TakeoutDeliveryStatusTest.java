@@ -49,14 +49,23 @@ class TakeoutDeliveryStatusTest {
     }
 
     @Test
-    void omittedKeyIsNotAReplay() {
+    void missingKeyStillReplaysTheSameTarget() {
         TakeoutDeliveryStatus.Move first = TakeoutDeliveryStatus.decide(snap(0), SHOP, 1, null, null);
         assertEquals(TakeoutDeliveryStatus.Effect.APPLY, first.effect());
         assertNull(first.requestKey());
 
-        ServiceException again = assertThrows(ServiceException.class,
-                () -> TakeoutDeliveryStatus.decide(snap(1), SHOP, 1, null, null));
-        assertEquals(ORDER_STATUS_ERROR.getCode(), again.getCode());
+        int writes = 0;
+        TakeoutDeliveryStatus.Move again = TakeoutDeliveryStatus.decide(snap(1), SHOP, 1, null, null);
+        TakeoutDeliveryStatus.Move done = TakeoutDeliveryStatus.decide(snap(2), SHOP, 2, null, null);
+        if (again.effect() == TakeoutDeliveryStatus.Effect.APPLY) {
+            writes++;
+        }
+        if (done.effect() == TakeoutDeliveryStatus.Effect.APPLY) {
+            writes++;
+        }
+        assertEquals(TakeoutDeliveryStatus.Effect.REPLAY, again.effect());
+        assertEquals(TakeoutDeliveryStatus.Effect.REPLAY, done.effect());
+        assertEquals(0, writes);
     }
 
     @Test
@@ -71,7 +80,6 @@ class TakeoutDeliveryStatusTest {
         assertStatus(snap(2), 1);
         assertStatus(snap(2), 3);
         assertStatus(snap(3), 2);
-        assertStatus(snap(1), 1);
         assertEquals(1, OrderInfoEnum.REFUND_STATUS_1.getValue());
         assertEquals(2, OrderInfoEnum.REFUND_STATUS_2.getValue());
         assertStatus(new TakeoutDeliveryStatus.Snapshot(10L, SHOP, 1, "takeout", 0, OrderInfoEnum.REFUND_STATUS_1.getValue()), 1);
@@ -124,13 +132,6 @@ class TakeoutDeliveryStatusTest {
         AppStoreOrderServiceImpl.initializeFulfillment(created);
         assertEquals(OrderInfoEnum.PAY_STATUS_0.getValue(), created.getPaid());
         assertEquals(OrderInfoEnum.STATUS_0.getValue(), created.getStatus());
-    }
-
-    @Test
-    void takeoutReceivedTitleIsDeliveredAndOtherTypesStayPickedUp() {
-        assertEquals("已送达", AppStoreOrderServiceImpl.receivedTitle("takeout"));
-        assertEquals("已取餐", AppStoreOrderServiceImpl.receivedTitle("takein"));
-        assertEquals("已取餐", AppStoreOrderServiceImpl.receivedTitle("desk"));
     }
 
     private static void assertStatus(TakeoutDeliveryStatus.Snapshot order) {
