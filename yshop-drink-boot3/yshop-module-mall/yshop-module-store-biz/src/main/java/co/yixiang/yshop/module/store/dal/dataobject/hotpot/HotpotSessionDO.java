@@ -32,6 +32,8 @@ public class HotpotSessionDO extends BaseDO {
 
     private Integer zeroPay;
 
+    private Integer feesWaived;
+
     private String status;
 
     private String requestKey;

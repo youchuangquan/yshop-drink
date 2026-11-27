@@ -37,6 +37,8 @@ public class HotpotBoundBillResp {
     @Data
     public static class DishLine {
 
+        private Long lineId;
+
         private Long productId;
 
         private String name;
@@ -44,6 +46,12 @@ public class HotpotBoundBillResp {
         private Integer priceFen;
 
         private Integer quantity;
+
+        private Integer servedQty;
+
+        private Integer refundedQty;
+
+        private Integer refundableQty;
 
     }
 

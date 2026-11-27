@@ -166,10 +166,14 @@ public class HotpotServiceImpl implements HotpotService {
         List<HotpotBoundBillResp.DishLine> dishes = new ArrayList<>();
         for (HotpotFlow.SessionDish dish : bill.dishes()) {
             HotpotBoundBillResp.DishLine line = new HotpotBoundBillResp.DishLine();
+            line.setLineId(dish.id);
             line.setProductId(dish.productId);
             line.setName(dish.name);
             line.setPriceFen(dish.priceFen);
             line.setQuantity(dish.quantity);
+            line.setServedQty(dish.servedQty);
+            line.setRefundedQty(dish.refundedQty);
+            line.setRefundableQty(dish.refundableQty());
             dishes.add(line);
         }
         resp.setDishes(dishes);
@@ -329,6 +333,42 @@ public class HotpotServiceImpl implements HotpotService {
     }
 
     @Override
+    public List<HotpotSessionResp> listOpenSessions(long shopId) {
+        long shop = ShopAccess.requirePositiveShopId(shopId);
+        HotpotFlow.Board board = load(shop);
+        List<HotpotSessionResp> result = new ArrayList<>();
+        for (HotpotFlow.Session session : HotpotFlow.openSessions(board, shop)) {
+            HotpotSessionResp resp = toSession(session, null, null);
+            if (session.tableId != null) {
+                HotpotFlow.Table table = board.tables.get(session.tableId);
+                if (table != null && table.shopId == shop) {
+                    resp.setSignCode(table.signCode);
+                }
+            }
+            result.add(resp);
+        }
+        return result;
+    }
+
+    @Override
+    public HotpotSessionResp serve(long shopId, long sessionId, int version, String requestKey,
+                                   List<HotpotFlow.LineQty> items) {
+        long shop = requireStaffShopSession(shopId, sessionId);
+        HotpotFlow.Session session = write(shop, requestKey,
+                (board, key) -> HotpotFlow.serve(board, shop, sessionId, version, true, key, items));
+        return toSession(session, Boolean.FALSE, null);
+    }
+
+    @Override
+    public HotpotSessionResp refund(long shopId, long sessionId, int version, String requestKey,
+                                    List<HotpotFlow.LineQty> items) {
+        long shop = requireStaffShopSession(shopId, sessionId);
+        HotpotFlow.Settlement settlement = write(shop, requestKey,
+                (board, key) -> HotpotFlow.refund(board, shop, sessionId, version, true, key, items));
+        return toSession(settlement.session, settlement.paymentSuccess, settlement.disposition);
+    }
+
+    @Override
     public HotpotSessionResp settle(long actorUid, long sessionId, int version, boolean staff, Long staffShop) {
         if (actorUid <= 0 || sessionId <= 0 || version < 0) {
             throw exception(BAD_REQUEST);
@@ -386,6 +426,19 @@ public class HotpotServiceImpl implements HotpotService {
                     save(board);
                     return value;
                 }));
+    }
+
+    private long requireStaffShopSession(long shopId, long sessionId) {
+        long shop = ShopAccess.requirePositiveShopId(shopId);
+        if (sessionId <= 0) {
+            throw exception(BAD_REQUEST);
+        }
+        HotpotSessionDO row = sessionMapper.selectBySessionId(sessionId);
+        if (row == null || row.getShopId() == null) {
+            throw exception(NOT_FOUND);
+        }
+        ShopAccess.assertSameShop(row.getShopId(), shop);
+        return shop;
     }
 
     private void assertSlotShop(long slotId, long shopId) {
@@ -492,6 +545,7 @@ public class HotpotServiceImpl implements HotpotService {
                 session.payableFen = row.getPayableFen() == null ? 0 : row.getPayableFen();
                 session.paid = false;
                 session.zeroPayReleased = row.getZeroPay() != null && row.getZeroPay() == 1;
+                session.feesWaived = row.getFeesWaived() != null && row.getFeesWaived() == 1;
                 session.status = HotpotFlow.SessionStatus.valueOf(row.getStatus());
                 session.requestKey = row.getRequestKey();
                 session.persisted = true;
@@ -535,6 +589,8 @@ public class HotpotServiceImpl implements HotpotService {
                 line.name = row.getName();
                 line.priceFen = row.getPriceFen() == null ? 0 : row.getPriceFen();
                 line.quantity = row.getQuantity() == null ? 0 : row.getQuantity();
+                line.servedQty = row.getServedQty() == null ? 0 : row.getServedQty();
+                line.refundedQty = row.getRefundedQty() == null ? 0 : row.getRefundedQty();
                 line.persisted = true;
                 session.dishes.add(line);
                 board.noteId(line.id);
@@ -582,6 +638,7 @@ public class HotpotServiceImpl implements HotpotService {
         updateDirty(board);
         insertSessionPots(board);
         insertSessionDishes(board);
+        updateSessionDishes(board);
         saveRequests(board);
         board.mutated = false;
     }
@@ -686,6 +743,7 @@ public class HotpotServiceImpl implements HotpotService {
             row.setVersion(session.version);
             row.setPayableFen(session.payableFen);
             row.setZeroPay(session.zeroPayReleased ? 1 : 0);
+            row.setFeesWaived(session.feesWaived ? 1 : 0);
             row.setStatus(session.status.name());
             row.setRequestKey(session.requestKey);
             sessionMapper.insert(row);
@@ -724,7 +782,7 @@ public class HotpotServiceImpl implements HotpotService {
             if (session.persisted && session.dirty) {
                 if (sessionMapper.updateSession(session.id, session.shopId, session.tableId, session.holdId,
                         session.version, session.payableFen, session.zeroPayReleased ? 1 : 0,
-                        session.status.name()) != 1) {
+                        session.feesWaived ? 1 : 0, session.status.name()) != 1) {
                     throw exception(BAD_REQUEST);
                 }
                 session.dirty = false;
@@ -773,9 +831,27 @@ public class HotpotServiceImpl implements HotpotService {
                 row.setName(line.name);
                 row.setPriceFen(line.priceFen);
                 row.setQuantity(line.quantity);
+                row.setServedQty(line.servedQty);
+                row.setRefundedQty(line.refundedQty);
                 sessionDishMapper.insert(row);
                 line.id = row.getId();
                 line.persisted = true;
+                line.dirty = false;
+            }
+        }
+    }
+
+    private void updateSessionDishes(HotpotFlow.Board board) {
+        for (HotpotFlow.Session session : board.sessions.values()) {
+            for (HotpotFlow.SessionDish line : session.dishes) {
+                if (!line.persisted || !line.dirty) {
+                    continue;
+                }
+                if (sessionDishMapper.updateQty(line.id, session.shopId, session.id, line.servedQty,
+                        line.refundedQty) != 1) {
+                    throw exception(BAD_REQUEST);
+                }
+                line.dirty = false;
             }
         }
     }
@@ -903,6 +979,7 @@ public class HotpotServiceImpl implements HotpotService {
         resp.setStatus(session.status.name());
         resp.setPaid(false);
         resp.setZeroPayReleased(session.zeroPayReleased);
+        resp.setFeesWaived(session.feesWaived);
         resp.setPaymentSuccess(paymentSuccess);
         resp.setDisposition(disposition);
         List<HotpotSessionResp.PotLine> lines = new ArrayList<>();
@@ -917,10 +994,14 @@ public class HotpotServiceImpl implements HotpotService {
         List<HotpotSessionResp.DishLine> dishes = new ArrayList<>();
         for (HotpotFlow.SessionDish dish : session.dishes) {
             HotpotSessionResp.DishLine line = new HotpotSessionResp.DishLine();
+            line.setLineId(dish.id);
             line.setProductId(dish.productId);
             line.setName(dish.name);
             line.setPriceFen(dish.priceFen);
             line.setQuantity(dish.quantity);
+            line.setServedQty(dish.servedQty);
+            line.setRefundedQty(dish.refundedQty);
+            line.setRefundableQty(dish.refundableQty());
             dishes.add(line);
         }
         resp.setDishes(dishes);

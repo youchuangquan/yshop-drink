@@ -31,4 +31,8 @@ public class HotpotSessionDishDO extends BaseDO {
 
     private Integer quantity;
 
+    private Integer servedQty;
+
+    private Integer refundedQty;
+
 }

@@ -5,11 +5,13 @@ import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.List;
 
 import static co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.BAD_REQUEST;
 import static co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.FORBIDDEN;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -19,6 +21,9 @@ class HotpotFlowTest {
     private static final long OTHER_SHOP = 2L;
     private static final long GUEST = 42L;
     private static final long OTHER_GUEST = 99L;
+    private static final long BEEF = 501L;
+    private static final long TOFU = 502L;
+    private static final int POT_FEN = 3577;
 
     @Test
     void reservationOccupiesSlotCapacity() {
@@ -329,6 +334,403 @@ class HotpotFlowTest {
         assertEquals(0, foreign.occupied);
     }
 
+    @Test
+    void staffCanRegisterServedQtyWithoutPassingTheOriginal() {
+        HotpotFlow.Board board = board();
+        HotpotFlow.Slot slot = slot(board, SHOP, 2, "srv-slot-cap1");
+        table(board, SHOP, "S1", "srv-table-cap");
+        menu(board, SHOP, BEEF, "鲜牛肉", 1800);
+        HotpotFlow.Session session = HotpotFlow.orderDish(board, SHOP, slot.id, "S1", GUEST, BEEF, 2, null,
+                "srv-dish-cap1");
+        HotpotFlow.SessionDish line = session.dishes.get(0);
+        assertEquals(3600, session.payableFen);
+
+        HotpotFlow.serve(board, SHOP, session.id, session.version, true, "srv-serve-cap1",
+                List.of(new HotpotFlow.LineQty(line.id, 2)));
+        assertEquals(2, line.quantity);
+        assertEquals(2, line.servedQty);
+        assertEquals(0, line.refundedQty);
+        assertEquals(0, line.refundableQty());
+        assertEquals(3600, session.payableFen);
+        assertEquals(2, session.version);
+
+        int version = session.version;
+        ServiceException over = assertThrows(ServiceException.class,
+                () -> HotpotFlow.serve(board, SHOP, session.id, version, true, "srv-serve-over",
+                        List.of(new HotpotFlow.LineQty(line.id, 1))));
+        assertEquals(BAD_REQUEST.getCode(), over.getCode());
+        assertEquals(2, line.servedQty);
+        assertEquals(2, line.quantity);
+        assertEquals(version, session.version);
+
+        ServiceException stale = assertThrows(ServiceException.class,
+                () -> HotpotFlow.serve(board, SHOP, session.id, version + 3, true, "srv-serve-stale",
+                        List.of(new HotpotFlow.LineQty(line.id, 1))));
+        assertEquals(BAD_REQUEST.getCode(), stale.getCode());
+        assertEquals(2, line.servedQty);
+    }
+
+    @Test
+    void onlyTheUnservedQtyCanBeRefunded() {
+        HotpotFlow.Board board = board();
+        HotpotFlow.Slot slot = slot(board, SHOP, 2, "srv-slot-part");
+        HotpotFlow.Table table = table(board, SHOP, "S2", "srv-table-part");
+        menu(board, SHOP, BEEF, "鲜牛肉", 1000);
+        HotpotFlow.Session session = HotpotFlow.orderDish(board, SHOP, slot.id, "S2", GUEST, BEEF, 4, null,
+                "srv-dish-part");
+        HotpotFlow.Pot pot = HotpotFlow.addPotConfig(board, SHOP, "红锅", POT_FEN, 7L, "srv-pot-part1");
+        HotpotFlow.addPot(board, SHOP, session.id, pot.id, session.version, GUEST, false, "srv-pot-part2");
+        HotpotFlow.SessionDish line = session.dishes.get(0);
+        assertEquals(4000 + POT_FEN, session.payableFen);
+
+        HotpotFlow.serve(board, SHOP, session.id, session.version, true, "srv-serve-part",
+                List.of(new HotpotFlow.LineQty(line.id, 1)));
+        assertEquals(1, line.servedQty);
+        assertEquals(3, line.refundableQty());
+        assertEquals(4000 + POT_FEN, session.payableFen);
+        assertEquals(4, line.quantity);
+
+        int version = session.version;
+        ServiceException tooMuch = assertThrows(ServiceException.class,
+                () -> HotpotFlow.refund(board, SHOP, session.id, version, true, "srv-refund-too",
+                        List.of(new HotpotFlow.LineQty(line.id, 4))));
+        assertEquals(BAD_REQUEST.getCode(), tooMuch.getCode());
+        assertEquals(0, line.refundedQty);
+        assertEquals(1, line.servedQty);
+        assertEquals(version, session.version);
+        assertFalse(session.feesWaived);
+
+        HotpotFlow.Settlement kept = HotpotFlow.refund(board, SHOP, session.id, version, true, "srv-refund-rest",
+                List.of(new HotpotFlow.LineQty(line.id, 3)));
+        assertEquals(3, line.refundedQty);
+        assertEquals(1, line.servedQty);
+        assertEquals(0, line.refundableQty());
+        assertEquals(4, line.quantity);
+        assertEquals(1000 + POT_FEN, session.payableFen);
+        assertEquals(POT_FEN, session.pots.get(0).priceFen);
+        assertFalse(session.feesWaived);
+        assertFalse(session.zeroPayReleased);
+        assertFalse(session.paid);
+        assertFalse(kept.paymentSuccess);
+        assertNull(kept.disposition);
+        assertEquals(HotpotFlow.SessionStatus.OPEN, session.status);
+        assertTrue(table.occupied);
+        assertEquals(1, slot.occupied);
+    }
+
+    @Test
+    void customersCannotServeOrRefund() {
+        HotpotFlow.Board board = board();
+        HotpotFlow.Slot slot = slot(board, SHOP, 1, "srv-slot-cust");
+        table(board, SHOP, "S3", "srv-table-cust");
+        menu(board, SHOP, BEEF, "鲜牛肉", 1800);
+        HotpotFlow.Session session = HotpotFlow.orderDish(board, SHOP, slot.id, "S3", GUEST, BEEF, 1, null,
+                "srv-dish-cust");
+        HotpotFlow.SessionDish line = session.dishes.get(0);
+        int requests = board.requests.size();
+
+        ServiceException serve = assertThrows(ServiceException.class,
+                () -> HotpotFlow.serve(board, SHOP, session.id, session.version, false, "srv-serve-cust",
+                        List.of(new HotpotFlow.LineQty(line.id, 1))));
+        assertEquals(FORBIDDEN.getCode(), serve.getCode());
+        ServiceException refund = assertThrows(ServiceException.class,
+                () -> HotpotFlow.refund(board, SHOP, session.id, session.version, false, "srv-refund-cus",
+                        List.of(new HotpotFlow.LineQty(line.id, 1))));
+        assertEquals(FORBIDDEN.getCode(), refund.getCode());
+        assertEquals(0, line.servedQty);
+        assertEquals(0, line.refundedQty);
+        assertEquals(1, line.quantity);
+        assertEquals(requests, board.requests.size());
+        assertEquals(HotpotFlow.SessionStatus.OPEN, session.status);
+    }
+
+    @Test
+    void refundingEveryLineWaivesThePotAndReleasesWithoutAPayment() {
+        HotpotFlow.Board board = board();
+        HotpotFlow.Slot slot = slot(board, SHOP, 2, "srv-slot-zero");
+        HotpotFlow.Table table = table(board, SHOP, "S4", "srv-table-zero");
+        menu(board, SHOP, BEEF, "鲜牛肉", 1800);
+        menu(board, SHOP, TOFU, "豆腐", 600);
+        HotpotFlow.Session session = HotpotFlow.orderDish(board, SHOP, slot.id, "S4", GUEST, BEEF, 1, null,
+                "srv-dish-zero1");
+        HotpotFlow.Hold hold = board.holds.get(session.holdId);
+        HotpotFlow.orderDish(board, SHOP, slot.id, "S4", GUEST, TOFU, 2, session.version, "srv-dish-zero2");
+        HotpotFlow.Pot pot = HotpotFlow.addPotConfig(board, SHOP, "红锅", POT_FEN, 7L, "srv-pot-zero1");
+        HotpotFlow.addPot(board, SHOP, session.id, pot.id, session.version, GUEST, false, "srv-pot-zero2");
+        assertEquals(1800 + 1200 + POT_FEN, session.payableFen);
+        HotpotFlow.SessionDish beef = session.dishes.get(0);
+        HotpotFlow.SessionDish tofu = session.dishes.get(1);
+        List<HotpotFlow.LineQty> forward = List.of(new HotpotFlow.LineQty(beef.id, 1),
+                new HotpotFlow.LineQty(tofu.id, 2));
+        List<HotpotFlow.LineQty> reversed = List.of(new HotpotFlow.LineQty(tofu.id, 2),
+                new HotpotFlow.LineQty(beef.id, 1));
+
+        HotpotFlow.Settlement cleared = HotpotFlow.refund(board, SHOP, session.id, session.version, true,
+                "srv-refund-all", forward);
+        assertEquals(1, beef.quantity);
+        assertEquals(1, beef.refundedQty);
+        assertEquals(0, beef.servedQty);
+        assertEquals(2, tofu.refundedQty);
+        assertEquals(0, tofu.servedQty);
+        assertTrue(session.feesWaived);
+        assertEquals(1, session.pots.size());
+        assertEquals(POT_FEN, session.pots.get(0).priceFen);
+        assertEquals(pot.id, session.pots.get(0).potId);
+        assertEquals(0, session.payableFen);
+        assertFalse(session.paid);
+        assertFalse(cleared.paymentSuccess);
+        assertTrue(cleared.zeroPayReleased);
+        assertEquals(HotpotFlow.DISPOSITION_ZERO_PAY, cleared.disposition);
+        assertEquals(HotpotFlow.SessionStatus.RELEASED, session.status);
+        assertEquals(HotpotFlow.HoldStatus.RELEASED, hold.status);
+        assertEquals(0, slot.occupied);
+        assertFalse(table.occupied);
+        assertNull(table.boundUid);
+        assertNull(table.sessionId);
+        for (Field field : HotpotFlow.Session.class.getDeclaredFields()) {
+            assertFalse(field.getName().toLowerCase().contains("companion"));
+        }
+
+        int version = session.version;
+        int requests = board.requests.size();
+        HotpotFlow.Settlement replay = HotpotFlow.refund(board, SHOP, session.id, version, true, "srv-refund-all",
+                reversed);
+        assertFalse(replay.paymentSuccess);
+        assertTrue(replay.zeroPayReleased);
+        assertEquals(HotpotFlow.DISPOSITION_ZERO_PAY, replay.disposition);
+        assertEquals(version, session.version);
+        assertEquals(0, slot.occupied);
+        assertEquals(requests, board.requests.size());
+        assertFalse(session.paid);
+
+        ServiceException again = assertThrows(ServiceException.class,
+                () -> HotpotFlow.serve(board, SHOP, session.id, version, true, "srv-serve-after",
+                        List.of(new HotpotFlow.LineQty(beef.id, 1))));
+        assertEquals(BAD_REQUEST.getCode(), again.getCode());
+        assertEquals(0, beef.servedQty);
+        assertEquals(0, slot.occupied);
+    }
+
+    @Test
+    void aServedLineBlocksEmptyingTheTable() {
+        HotpotFlow.Board board = board();
+        HotpotFlow.Slot slot = slot(board, SHOP, 2, "srv-slot-block");
+        HotpotFlow.Table table = table(board, SHOP, "S5", "srv-table-block");
+        menu(board, SHOP, BEEF, "鲜牛肉", 1000);
+        menu(board, SHOP, TOFU, "豆腐", 500);
+        HotpotFlow.Session session = HotpotFlow.orderDish(board, SHOP, slot.id, "S5", GUEST, BEEF, 2, null,
+                "srv-dish-block1");
+        HotpotFlow.orderDish(board, SHOP, slot.id, "S5", GUEST, TOFU, 1, session.version, "srv-dish-block2");
+        HotpotFlow.Pot pot = HotpotFlow.addPotConfig(board, SHOP, "红锅", POT_FEN, 7L, "srv-pot-block1");
+        HotpotFlow.addPot(board, SHOP, session.id, pot.id, session.version, GUEST, false, "srv-pot-block2");
+        HotpotFlow.SessionDish beef = session.dishes.get(0);
+        HotpotFlow.SessionDish tofu = session.dishes.get(1);
+
+        HotpotFlow.serve(board, SHOP, session.id, session.version, true, "srv-serve-block",
+                List.of(new HotpotFlow.LineQty(beef.id, 2)));
+        HotpotFlow.Settlement kept = HotpotFlow.refund(board, SHOP, session.id, session.version, true,
+                "srv-refund-tofu", List.of(new HotpotFlow.LineQty(tofu.id, 1)));
+        assertEquals(2, beef.servedQty);
+        assertEquals(0, beef.refundedQty);
+        assertEquals(1, tofu.refundedQty);
+        assertEquals(0, tofu.servedQty);
+        assertEquals(2000 + POT_FEN, session.payableFen);
+        assertFalse(session.feesWaived);
+        assertFalse(session.zeroPayReleased);
+        assertFalse(session.paid);
+        assertFalse(kept.paymentSuccess);
+        assertNull(kept.disposition);
+        assertEquals(HotpotFlow.SessionStatus.OPEN, session.status);
+        assertTrue(table.occupied);
+        assertEquals(1, slot.occupied);
+        assertEquals(1, session.pots.size());
+
+        ServiceException empty = assertThrows(ServiceException.class,
+                () -> HotpotFlow.refund(board, SHOP, session.id, session.version, true, "srv-refund-beef",
+                        List.of(new HotpotFlow.LineQty(beef.id, 2))));
+        assertEquals(BAD_REQUEST.getCode(), empty.getCode());
+        assertEquals(0, beef.refundedQty);
+        assertTrue(table.occupied);
+        assertFalse(session.feesWaived);
+    }
+
+    @Test
+    void theSameRequestKeyAppliesOnceAndADifferentStampIsRejected() {
+        HotpotFlow.Board board = board();
+        HotpotFlow.Slot slot = slot(board, SHOP, 2, "srv-slot-idem");
+        table(board, SHOP, "S6", "srv-table-idem");
+        menu(board, SHOP, BEEF, "鲜牛肉", 1000);
+        menu(board, SHOP, TOFU, "豆腐", 500);
+        HotpotFlow.Session session = HotpotFlow.orderDish(board, SHOP, slot.id, "S6", GUEST, BEEF, 2, null,
+                "srv-dish-idem1");
+        HotpotFlow.orderDish(board, SHOP, slot.id, "S6", GUEST, TOFU, 2, session.version, "srv-dish-idem2");
+        HotpotFlow.SessionDish beef = session.dishes.get(0);
+        HotpotFlow.SessionDish tofu = session.dishes.get(1);
+        List<HotpotFlow.LineQty> forward = List.of(new HotpotFlow.LineQty(beef.id, 1),
+                new HotpotFlow.LineQty(tofu.id, 1));
+        List<HotpotFlow.LineQty> reversed = List.of(new HotpotFlow.LineQty(tofu.id, 1),
+                new HotpotFlow.LineQty(beef.id, 1));
+
+        HotpotFlow.serve(board, SHOP, session.id, session.version, true, "srv-serve-idem", forward);
+        int version = session.version;
+        int requests = board.requests.size();
+        HotpotFlow.serve(board, SHOP, session.id, 1, true, "srv-serve-idem", reversed);
+        assertEquals(1, beef.servedQty);
+        assertEquals(1, tofu.servedQty);
+        assertEquals(version, session.version);
+        assertEquals(requests, board.requests.size());
+
+        ServiceException changed = assertThrows(ServiceException.class,
+                () -> HotpotFlow.serve(board, SHOP, session.id, version, true, "srv-serve-idem",
+                        List.of(new HotpotFlow.LineQty(beef.id, 2))));
+        assertEquals(BAD_REQUEST.getCode(), changed.getCode());
+        assertEquals(1, beef.servedQty);
+
+        ServiceException reused = assertThrows(ServiceException.class,
+                () -> HotpotFlow.refund(board, SHOP, session.id, version, true, "srv-serve-idem",
+                        List.of(new HotpotFlow.LineQty(beef.id, 1))));
+        assertEquals(BAD_REQUEST.getCode(), reused.getCode());
+        assertEquals(0, beef.refundedQty);
+        assertEquals(requests, board.requests.size());
+
+        HotpotFlow.refund(board, SHOP, session.id, version, true, "srv-refund-idem",
+                List.of(new HotpotFlow.LineQty(beef.id, 1)));
+        int refundedVersion = session.version;
+        int refundedRequests = board.requests.size();
+        HotpotFlow.refund(board, SHOP, session.id, refundedVersion, true, "srv-refund-idem",
+                List.of(new HotpotFlow.LineQty(beef.id, 1)));
+        assertEquals(1, beef.refundedQty);
+        assertEquals(1, beef.servedQty);
+        assertEquals(refundedVersion, session.version);
+        assertEquals(refundedRequests, board.requests.size());
+    }
+
+    @Test
+    void anotherShopsStaffCannotServeOrRefund() {
+        HotpotFlow.Board board = board();
+        HotpotFlow.Slot slot = slot(board, SHOP, 1, "srv-slot-shop");
+        table(board, SHOP, "S7", "srv-table-shop");
+        menu(board, SHOP, BEEF, "鲜牛肉", 1800);
+        HotpotFlow.Session session = HotpotFlow.orderDish(board, SHOP, slot.id, "S7", GUEST, BEEF, 1, null,
+                "srv-dish-shop");
+        HotpotFlow.SessionDish line = session.dishes.get(0);
+
+        ServiceException serve = assertThrows(ServiceException.class,
+                () -> HotpotFlow.serve(board, OTHER_SHOP, session.id, session.version, true, "srv-serve-shop",
+                        List.of(new HotpotFlow.LineQty(line.id, 1))));
+        assertEquals(FORBIDDEN.getCode(), serve.getCode());
+        ServiceException refund = assertThrows(ServiceException.class,
+                () -> HotpotFlow.refund(board, OTHER_SHOP, session.id, session.version, true, "srv-refund-shop",
+                        List.of(new HotpotFlow.LineQty(line.id, 1))));
+        assertEquals(FORBIDDEN.getCode(), refund.getCode());
+        assertEquals(0, line.servedQty);
+        assertEquals(0, line.refundedQty);
+        assertEquals(HotpotFlow.SessionStatus.OPEN, session.status);
+    }
+
+    @Test
+    void paidOrReleasedSessionsRejectServeAndRefund() {
+        HotpotFlow.Board board = board();
+        HotpotFlow.Slot slot = slot(board, SHOP, 1, "srv-slot-paid");
+        table(board, SHOP, "S8", "srv-table-paid");
+        menu(board, SHOP, BEEF, "鲜牛肉", 1800);
+        HotpotFlow.Session session = HotpotFlow.orderDish(board, SHOP, slot.id, "S8", GUEST, BEEF, 1, null,
+                "srv-dish-paid");
+        HotpotFlow.SessionDish line = session.dishes.get(0);
+        session.paid = true;
+
+        ServiceException paidServe = assertThrows(ServiceException.class,
+                () -> HotpotFlow.serve(board, SHOP, session.id, session.version, true, "srv-serve-paid",
+                        List.of(new HotpotFlow.LineQty(line.id, 1))));
+        assertEquals(BAD_REQUEST.getCode(), paidServe.getCode());
+        ServiceException paidRefund = assertThrows(ServiceException.class,
+                () -> HotpotFlow.refund(board, SHOP, session.id, session.version, true, "srv-refund-paid",
+                        List.of(new HotpotFlow.LineQty(line.id, 1))));
+        assertEquals(BAD_REQUEST.getCode(), paidRefund.getCode());
+        assertEquals(0, line.servedQty);
+        assertEquals(0, line.refundedQty);
+        assertTrue(session.paid);
+        assertEquals(HotpotFlow.SessionStatus.OPEN, session.status);
+
+        session.paid = false;
+        session.zeroPayReleased = true;
+        session.status = HotpotFlow.SessionStatus.RELEASED;
+        ServiceException released = assertThrows(ServiceException.class,
+                () -> HotpotFlow.serve(board, SHOP, session.id, session.version, true, "srv-serve-rel",
+                        List.of(new HotpotFlow.LineQty(line.id, 1))));
+        assertEquals(BAD_REQUEST.getCode(), released.getCode());
+        assertEquals(0, line.servedQty);
+        assertEquals(HotpotFlow.SessionStatus.RELEASED, session.status);
+    }
+
+    @Test
+    void aSessionTakesOnlyOnePotFromTheShopConfig() {
+        HotpotFlow.Board board = board();
+        HotpotFlow.Slot slot = slot(board, SHOP, 1, "srv-slot-onepot");
+        HotpotFlow.reserve(board, SHOP, slot.id, GUEST, "srv-hold-onepot");
+        HotpotFlow.Session session = HotpotFlow.open(board, SHOP, slot.id, null, GUEST, false, "srv-open-onepot");
+        HotpotFlow.Pot first = HotpotFlow.addPotConfig(board, SHOP, "红锅", POT_FEN, 7L, "srv-pot-one-a");
+        HotpotFlow.Pot second = HotpotFlow.addPotConfig(board, SHOP, "清汤", 2600, 7L, "srv-pot-one-b");
+
+        HotpotFlow.addPot(board, SHOP, session.id, first.id, session.version, GUEST, false, "srv-pot-add-a");
+        assertEquals(1, session.pots.size());
+        assertEquals(POT_FEN, session.payableFen);
+        assertEquals(POT_FEN, session.pots.get(0).priceFen);
+        int version = session.version;
+        HotpotFlow.addPot(board, SHOP, session.id, first.id, version, GUEST, false, "srv-pot-add-a");
+        assertEquals(1, session.pots.size());
+        assertEquals(version, session.version);
+
+        ServiceException extra = assertThrows(ServiceException.class,
+                () -> HotpotFlow.addPot(board, SHOP, session.id, second.id, version, GUEST, false, "srv-pot-add-b"));
+        assertEquals(BAD_REQUEST.getCode(), extra.getCode());
+        assertEquals(1, session.pots.size());
+        assertEquals(POT_FEN, session.pots.get(0).priceFen);
+        assertEquals(POT_FEN, session.payableFen);
+    }
+
+    @Test
+    void openSessionsAreThisShopsInProgressLines() {
+        HotpotFlow.Board board = board();
+        HotpotFlow.Slot slot = slot(board, SHOP, 2, "srv-slot-list");
+        HotpotFlow.Table table = table(board, SHOP, "S9", "srv-table-list");
+        table(board, SHOP, "S8", "srv-table-list3");
+        HotpotFlow.Slot otherSlot = slot(board, OTHER_SHOP, 1, "srv-slot-list2");
+        table(board, OTHER_SHOP, "S9", "srv-table-list2");
+        menu(board, SHOP, BEEF, "鲜牛肉", 1000);
+        menu(board, OTHER_SHOP, BEEF, "别店牛肉", 900);
+        HotpotFlow.Session session = HotpotFlow.orderDish(board, SHOP, slot.id, "S9", GUEST, BEEF, 3, null,
+                "srv-dish-list1");
+        HotpotFlow.SessionDish line = session.dishes.get(0);
+        HotpotFlow.serve(board, SHOP, session.id, session.version, true, "srv-serve-list",
+                List.of(new HotpotFlow.LineQty(line.id, 1)));
+        HotpotFlow.orderDish(board, OTHER_SHOP, otherSlot.id, "S9", OTHER_GUEST, BEEF, 1, null, "srv-dish-list2");
+        HotpotFlow.Session paid = HotpotFlow.orderDish(board, SHOP, slot.id, "S8", OTHER_GUEST, BEEF, 1,
+                null, "srv-dish-list3");
+        paid.paid = true;
+
+        List<HotpotFlow.Session> rows = HotpotFlow.openSessions(board, SHOP);
+        assertEquals(1, rows.size());
+        assertEquals(session.id, rows.get(0).id);
+        assertEquals(table.id, rows.get(0).tableId);
+        assertEquals("S9", table.signCode);
+        HotpotFlow.SessionDish shown = rows.get(0).dishes.get(0);
+        assertEquals(line.id, shown.id);
+        assertEquals(3, shown.quantity);
+        assertEquals(1, shown.servedQty);
+        assertEquals(0, shown.refundedQty);
+        assertEquals(2, shown.refundableQty());
+
+        HotpotFlow.refund(board, SHOP, session.id, session.version, true, "srv-refund-list",
+                List.of(new HotpotFlow.LineQty(line.id, 2)));
+        assertEquals(1, HotpotFlow.openSessions(board, SHOP).size());
+        assertEquals(1, line.servedQty);
+        assertEquals(2, line.refundedQty);
+        assertFalse(session.feesWaived);
+        assertEquals(HotpotFlow.SessionStatus.OPEN, session.status);
+        assertTrue(table.occupied);
+    }
+
     private static HotpotFlow.Board board() {
         return new HotpotFlow.Board();
     }
@@ -339,6 +741,15 @@ class HotpotFlowTest {
 
     private static HotpotFlow.Table table(HotpotFlow.Board board, long shopId, String sign, String key) {
         return HotpotFlow.addTable(board, shopId, sign, 7L, key);
+    }
+
+    private static void menu(HotpotFlow.Board board, long shopId, long productId, String name, int priceFen) {
+        HotpotFlow.MenuDish dish = new HotpotFlow.MenuDish();
+        dish.id = productId;
+        dish.shopId = shopId;
+        dish.name = name;
+        dish.priceFen = priceFen;
+        board.menu.add(dish);
     }
 
     private static boolean hasTableNumber(HotpotFlow.Hold hold) {

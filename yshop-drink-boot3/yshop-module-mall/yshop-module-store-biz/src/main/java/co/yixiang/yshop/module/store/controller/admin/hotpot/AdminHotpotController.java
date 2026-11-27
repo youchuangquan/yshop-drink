@@ -1,5 +1,6 @@
 package co.yixiang.yshop.module.store.controller.admin.hotpot;
 
+import co.yixiang.yshop.framework.common.hotpot.HotpotFlow;
 import co.yixiang.yshop.framework.common.pojo.CommonResult;
 import co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils;
 import co.yixiang.yshop.module.store.controller.admin.hotpot.vo.AdminHotpotCommands;
@@ -22,6 +23,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.UNAUTHORIZED;
@@ -115,6 +117,29 @@ public class AdminHotpotController {
                 req.getRequestKey()));
     }
 
+    @GetMapping("/session")
+    @Operation(summary = "本店进行中的台次")
+    @PreAuthorize("@ss.hasPermission('store:shop:query')")
+    public CommonResult<List<HotpotSessionResp>> listSessions() {
+        return success(hotpotService.listOpenSessions(shopId()));
+    }
+
+    @PostMapping("/session/serve")
+    @Operation(summary = "登记上菜")
+    @PreAuthorize("@ss.hasPermission('store:shop:query')")
+    public CommonResult<HotpotSessionResp> serve(@Valid @RequestBody AdminHotpotCommands.Serve req) {
+        return success(hotpotService.serve(shopId(), req.getSessionId(), req.getVersion(), req.getRequestKey(),
+                lines(req.getItems())));
+    }
+
+    @PostMapping("/session/refund")
+    @Operation(summary = "退还未上桌的菜")
+    @PreAuthorize("@ss.hasPermission('store:shop:update')")
+    public CommonResult<HotpotSessionResp> refund(@Valid @RequestBody AdminHotpotCommands.Refund req) {
+        return success(hotpotService.refund(shopId(), req.getSessionId(), req.getVersion(), req.getRequestKey(),
+                lines(req.getItems())));
+    }
+
     @PostMapping("/session/open")
     @Operation(summary = "店员为散客开台")
     @PreAuthorize("@ss.hasPermission('store:shop:update')")
@@ -135,6 +160,14 @@ public class AdminHotpotController {
     @PreAuthorize("@ss.hasPermission('store:shop:update')")
     public CommonResult<HotpotSessionResp> settle(@Valid @RequestBody AdminHotpotCommands.Settle req) {
         return success(hotpotService.settle(loginUser(), req.getSessionId(), req.getVersion(), true, shopId()));
+    }
+
+    private static List<HotpotFlow.LineQty> lines(List<AdminHotpotCommands.LineQty> items) {
+        List<HotpotFlow.LineQty> rows = new ArrayList<>();
+        for (AdminHotpotCommands.LineQty item : items) {
+            rows.add(new HotpotFlow.LineQty(item.getLineId(), item.getQuantity()));
+        }
+        return rows;
     }
 
     private static long shopId() {

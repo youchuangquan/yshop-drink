@@ -20,9 +20,11 @@ class HotpotMapperSqlTest {
         assertShopSql(HotpotHoldMapper.class.getMethod("updateStatus", Long.class, Long.class, String.class));
         assertShopSql(HotpotSessionMapper.class.getMethod("selectByShop", Long.class));
         assertShopSql(HotpotSessionMapper.class.getMethod("updateSession", Long.class, Long.class, Long.class,
-                Long.class, int.class, int.class, int.class, String.class));
+                Long.class, int.class, int.class, int.class, int.class, String.class));
         assertShopSql(HotpotSessionPotMapper.class.getMethod("selectByShop", Long.class));
         assertShopSql(HotpotSessionDishMapper.class.getMethod("selectByShop", Long.class));
+        assertShopSql(HotpotSessionDishMapper.class.getMethod("updateQty", Long.class, Long.class, Long.class,
+                int.class, int.class));
         assertShopSql(ShopPotMapper.class.getMethod("selectByShop", Long.class));
         assertShopSql(HotpotRequestMapper.class.getMethod("selectByShop", Long.class));
         assertShopSql(HotpotRequestMapper.class.getMethod("updateLinks", Long.class, Long.class, Long.class,
@@ -43,9 +45,18 @@ class HotpotMapperSqlTest {
         String dishes = sql(HotpotSessionDishMapper.class.getMethod("selectByShop", Long.class));
         assertTrue(dishes.contains("price_fen"));
         assertTrue(dishes.contains("product_id"));
+        assertTrue(dishes.contains("served_qty"));
+        assertTrue(dishes.contains("refunded_qty"));
         assertFalse(dishes.contains("paid"));
+        String dishUpdate = sql(HotpotSessionDishMapper.class.getMethod("updateQty", Long.class, Long.class,
+                Long.class, int.class, int.class));
+        assertTrue(dishUpdate.contains("served_qty"));
+        assertTrue(dishUpdate.contains("refunded_qty"));
+        assertTrue(dishUpdate.contains("<= quantity"));
+        assertFalse(dishUpdate.contains("set quantity"));
         String sessionUpdate = sql(HotpotSessionMapper.class.getMethod("updateSession", Long.class, Long.class,
-                Long.class, Long.class, int.class, int.class, int.class, String.class));
+                Long.class, Long.class, int.class, int.class, int.class, int.class, String.class));
+        assertTrue(sessionUpdate.contains("fees_waived"));
         assertFalse(sessionUpdate.contains("paid"));
     }
 

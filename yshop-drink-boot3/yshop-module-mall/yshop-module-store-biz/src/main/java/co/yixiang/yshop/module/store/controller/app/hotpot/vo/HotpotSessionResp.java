@@ -30,6 +30,11 @@ public class HotpotSessionResp {
 
     private Boolean zeroPayReleased;
 
+    private Boolean feesWaived;
+
+    /** 桌台签码。进行中的台次列表用它当桌号。 */
+    private String signCode;
+
     private Boolean paymentSuccess;
 
     private String disposition;
@@ -52,6 +57,8 @@ public class HotpotSessionResp {
     @Data
     public static class DishLine {
 
+        private Long lineId;
+
         private Long productId;
 
         private String name;
@@ -59,6 +66,12 @@ public class HotpotSessionResp {
         private Integer priceFen;
 
         private Integer quantity;
+
+        private Integer servedQty;
+
+        private Integer refundedQty;
+
+        private Integer refundableQty;
 
     }
 
