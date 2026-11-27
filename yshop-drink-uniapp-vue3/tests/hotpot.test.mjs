@@ -257,7 +257,32 @@ test('the bill shows returned lines and settles with the returned version, not a
   assert.equal(view.payableFen, 1800)
   assert.equal(view.version, 2)
   assert.equal(view.dishes[0].quantity, 2)
+  assert.equal(view.dishes[0].servedQty, null)
+  assert.equal(view.feesWaived, false)
   assert.equal(view.pots[0].priceFen, 800)
+  const counted = presentBill({
+    sessionId: 15,
+    version: 4,
+    payableFen: 1800,
+    status: 'OPEN',
+    feesWaived: true,
+    dishes: [{
+      lineId: 9,
+      productId: 5,
+      name: '肥牛',
+      priceFen: 500,
+      quantity: 4,
+      servedQty: 1,
+      refundedQty: 1,
+      refundableQty: 2,
+    }],
+  })
+  assert.equal(counted.dishes[0].lineId, 9)
+  assert.equal(counted.dishes[0].servedQty, 1)
+  assert.equal(counted.dishes[0].refundedQty, 1)
+  assert.equal(counted.dishes[0].refundableQty, 2)
+  assert.equal(counted.feesWaived, true)
+  assert.equal('refund' in counted, false)
   assert.equal('ownerUid' in view, false)
   assert.equal('paidFen' in view, false)
   assert.equal('totalFen' in view, false)
@@ -317,6 +342,17 @@ test('customer pages stay on the existing hotpot reads and do not list reservati
   assert.match(bill, /payableFen/)
   assert.match(bill, /收款渠道未接通/)
   assert.match(bill, /bill\.dishes/)
+  assert.match(bill, /已上桌/)
+  assert.match(bill, /已退/)
+  assert.match(bill, /未上桌可退/)
+  assert.match(bill, /dish\.servedQty/)
+  assert.match(bill, /dish\.refundedQty/)
+  assert.match(bill, /dish\.refundableQty/)
+  assert.equal(bill.includes('session/refund'), false)
+  assert.equal(bill.includes('session/serve'), false)
+  assert.equal(bill.includes('hotpotRefund'), false)
+  assert.equal(api.includes('/hotpot/session/refund'), false)
+  assert.equal(api.includes('/hotpot/session/serve'), false)
   const startCheckout = bill.slice(bill.indexOf('const startCheckout'))
   assert.ok(startCheckout.indexOf('checkoutBody(') < startCheckout.indexOf('hotpotSettle'))
   assert.equal(startCheckout.includes('payableFen:'), false)

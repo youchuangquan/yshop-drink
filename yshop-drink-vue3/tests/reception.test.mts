@@ -1,27 +1,37 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFileSync } from 'node:fs'
 import {
+  acceptLineCommand,
   acceptOpen,
   acceptReservationSeat,
   acceptSeat,
   boundShopId,
   canAssignTable,
   canSeat,
+  claimRequestKey,
   createRequestKey,
   forgetRequestKey,
   isRequestKey,
   lateArrivalFlag,
+  lineCommandBlockReason,
+  lineCommandBody,
+  lineCommandScope,
   openBlockReason,
   openBody,
   openScope,
   partitionByShop,
+  presentOpenSessions,
+  releaseRequestKey,
   reservationSeatBlockReason,
   reservationSeatBody,
   reservationSeatScope,
   seatBody,
   slotClockText,
   stableRequestKey,
+  type DishLineView,
   type HoldView,
+  type OpenSessionView,
   type SlotView,
   type TableView
 } from '../src/views/mall/store/hotpot/reception/reception.ts'
@@ -258,4 +268,156 @@ test('the same table reuses one reservation seat key', () => {
   forgetRequestKey(bucket, same)
   assert.equal(stableRequestKey(bucket, same, factory), 'retry-key4')
   assert.notEqual(same, openScope(shop, 3, 'A1'))
+})
+
+const dish = (patch: Partial<DishLineView> = {}): DishLineView => ({
+  lineId: 5,
+  name: '鲜牛肉',
+  priceFen: 1800,
+  quantity: 4,
+  servedQty: 1,
+  refundedQty: 0,
+  refundableQty: 3,
+  ...patch
+})
+
+const openSession = (patch: Partial<OpenSessionView> = {}): OpenSessionView => ({
+  sessionId: 20,
+  shopId: shop,
+  signCode: 'A1',
+  version: 3,
+  payableFen: 7200,
+  feesWaived: false,
+  status: 'OPEN',
+  dishes: [dish()],
+  ...patch
+})
+
+test('in-progress sessions keep this shop and the line quantities', () => {
+  const rows = presentOpenSessions(
+    [
+      {
+        sessionId: 20,
+        shopId: shop,
+        signCode: 'A1',
+        version: 3,
+        payableFen: 7200,
+        feesWaived: false,
+        status: 'OPEN',
+        dishes: [
+          {
+            lineId: 5,
+            name: '鲜牛肉',
+            priceFen: 1800,
+            quantity: 4,
+            servedQty: 1,
+            refundedQty: 0,
+            refundableQty: 3
+          }
+        ]
+      },
+      { sessionId: 21, shopId: 8, signCode: 'B2', version: 1, status: 'OPEN' },
+      { sessionId: 22, shopId: shop, version: 1, status: 'RELEASED', zeroPayReleased: true },
+      { sessionId: 23, shopId: shop, version: 1, status: 'OPEN', paid: true }
+    ],
+    shop
+  )
+  assert.equal(rows.visible.length, 1)
+  assert.equal(rows.ignored, 3)
+  assert.equal(rows.visible[0].signCode, 'A1')
+  assert.equal(rows.visible[0].feesWaived, false)
+  assert.equal(rows.visible[0].dishes[0].quantity, 4)
+  assert.equal(rows.visible[0].dishes[0].servedQty, 1)
+  assert.equal(rows.visible[0].dishes[0].refundableQty, 3)
+  assert.equal(presentOpenSessions([], shop).visible.length, 0)
+})
+
+test('serve and refund bodies stay on the line and do not carry a shop or a payment', () => {
+  const session = openSession()
+  const line = session.dishes[0]
+  assert.equal(lineCommandBlockReason(shop, session, line, 3, 'serve'), null)
+  assert.equal(lineCommandBlockReason(shop, session, line, 4, 'serve'), '上菜份数超过还没上桌的数量')
+  assert.equal(lineCommandBlockReason(shop, session, line, 4, 'refund'), '已上桌的不能退')
+  assert.equal(lineCommandBlockReason(shop, session, dish({ refundableQty: 0, servedQty: 4 }), 1, 'refund'), '这道菜没有未上桌的份数')
+
+  const body = lineCommandBody(session, shop, line, 2, 'line-key1', 'refund')
+  assert.deepEqual(Object.keys(body), ['sessionId', 'version', 'requestKey', 'items'])
+  assert.deepEqual(body, {
+    sessionId: 20,
+    version: 3,
+    requestKey: 'line-key1',
+    items: [{ lineId: 5, quantity: 2 }]
+  })
+  assert.equal('shopId' in body, false)
+  assert.equal('paidFen' in body, false)
+  assert.throws(() => lineCommandBody(session, shop, line, 4, 'line-key1', 'refund'))
+
+  const scope = lineCommandScope('serve', 20, 5, 1)
+  const bucket = new Map<string, string>()
+  const inflight = new Set<string>()
+  let n = 0
+  const factory = () => {
+    n += 1
+    return n === 1 ? 'serve-key1' : 'serve-key2'
+  }
+  const key = stableRequestKey(bucket, scope, factory)
+  assert.equal(claimRequestKey(inflight, key), true)
+  assert.equal(stableRequestKey(bucket, scope, factory), key)
+  assert.equal(claimRequestKey(inflight, key), false)
+  releaseRequestKey(inflight, key)
+  assert.equal(claimRequestKey(inflight, key), true)
+
+  const released = acceptLineCommand(
+    {
+      sessionId: 20,
+      shopId: shop,
+      status: 'RELEASED',
+      paid: false,
+      zeroPayReleased: true,
+      paymentSuccess: false,
+      feesWaived: true,
+      payableFen: 0
+    },
+    shop,
+    20
+  )
+  assert.equal(released.ok, true)
+  if (released.ok) {
+    assert.equal(released.released, true)
+    assert.equal(released.feesWaived, true)
+  }
+  assert.equal(
+    acceptLineCommand(
+      { sessionId: 20, shopId: shop, status: 'OPEN', paid: true, paymentSuccess: true },
+      shop,
+      20
+    ).ok,
+    false
+  )
+  assert.equal(
+    acceptLineCommand(
+      { sessionId: 20, shopId: shop, status: 'OPEN', paymentSuccess: true, paid: false },
+      shop,
+      20
+    ).ok,
+    false
+  )
+})
+
+test('the reception page registers lines and does not settle', () => {
+  const page = readFileSync(
+    new URL('../src/views/mall/store/hotpot/reception/index.vue', import.meta.url),
+    'utf8'
+  )
+  const api = readFileSync(new URL('../src/api/mall/store/hotpot/index.ts', import.meta.url), 'utf8')
+  assert.match(page, /进行中桌次/)
+  assert.match(page, /本店没有进行中的桌次/)
+  assert.match(page, /serveDishes/)
+  assert.match(page, /refundDishes/)
+  assert.equal(page.includes('/session/settle'), false)
+  assert.equal(page.includes('settle'), false)
+  assert.match(api, /\/store\/hotpot\/session'/)
+  assert.match(api, /\/store\/hotpot\/session\/serve/)
+  assert.match(api, /\/store\/hotpot\/session\/refund/)
+  assert.equal(api.includes('/session/settle'), false)
 })

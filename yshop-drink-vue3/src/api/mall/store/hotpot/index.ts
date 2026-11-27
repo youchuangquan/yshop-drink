@@ -36,6 +36,17 @@ export interface HotpotSeatResultVO {
   lateAutoCancels?: boolean
 }
 
+export interface HotpotDishLineVO {
+  lineId: number
+  productId?: number
+  name?: string
+  priceFen?: number | null
+  quantity: number
+  servedQty?: number
+  refundedQty?: number
+  refundableQty?: number
+}
+
 export interface HotpotSessionResultVO {
   sessionId: number
   shopId: number
@@ -47,8 +58,11 @@ export interface HotpotSessionResultVO {
   status: string
   paid?: boolean
   zeroPayReleased?: boolean
+  feesWaived?: boolean
+  signCode?: string | null
   paymentSuccess?: boolean | null
   disposition?: string | null
+  dishes?: HotpotDishLineVO[]
 }
 
 export interface HotpotSeatReq {
@@ -68,6 +82,13 @@ export interface HotpotReservationSeatReq {
   slotId: number
   signCode: string
   requestKey: string
+}
+
+export interface HotpotLineCommandReq {
+  sessionId: number
+  version: number
+  requestKey: string
+  items: { lineId: number; quantity: number }[]
 }
 
 export const listSlots = async () => {
@@ -92,4 +113,16 @@ export const openWalkIn = async (data: HotpotOpenReq) => {
 
 export const seatReservation = async (data: HotpotReservationSeatReq) => {
   return await request.post<HotpotSessionResultVO>({ url: '/store/hotpot/reservation/seat', data })
+}
+
+export const listOpenSessions = async () => {
+  return await request.get<HotpotSessionResultVO[]>({ url: '/store/hotpot/session' })
+}
+
+export const serveDishes = async (data: HotpotLineCommandReq) => {
+  return await request.post<HotpotSessionResultVO>({ url: '/store/hotpot/session/serve', data })
+}
+
+export const refundDishes = async (data: HotpotLineCommandReq) => {
+  return await request.post<HotpotSessionResultVO>({ url: '/store/hotpot/session/refund', data })
 }

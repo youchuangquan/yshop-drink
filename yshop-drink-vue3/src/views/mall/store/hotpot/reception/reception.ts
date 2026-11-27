@@ -4,6 +4,7 @@
  * POST /store/hotpot/seat 只把 HELD 改成 SEATED，不分配桌台，也不开桌次。
  * 预约安排到空桌走 POST /store/hotpot/reservation/seat。
  * 顾客编号为 0 的散客仍走 POST /store/hotpot/session/open。
+ * 进行中桌次只登记上菜和退还未上桌的份数，不结账。
  * 时段结束时刻已过时只在本页提醒，不取消，也不释放名额。
  */
 
@@ -112,6 +113,21 @@ export function stableRequestKey(
 
 export function forgetRequestKey(bucket: Map<string, string>, scope: string) {
   bucket.delete(scope)
+}
+
+/**
+ * 同一个请求键还在飞时，不再发第二次。键要先通过 stableRequestKey 固定下来。
+ */
+export function claimRequestKey(inflight: Set<string>, requestKey: string): boolean {
+  if (!isRequestKey(requestKey) || inflight.has(requestKey)) {
+    return false
+  }
+  inflight.add(requestKey)
+  return true
+}
+
+export function releaseRequestKey(inflight: Set<string>, requestKey: string) {
+  inflight.delete(requestKey)
 }
 
 /**
@@ -346,6 +362,7 @@ export interface SessionResult {
   payableFen?: number | null
   paid?: boolean
   zeroPayReleased?: boolean
+  feesWaived?: boolean
   paymentSuccess?: boolean | null
 }
 
@@ -409,8 +426,218 @@ export function holdStatusText(hold: HoldView): string {
   return '未知状态'
 }
 
+export interface DishLineView {
+  lineId: number
+  name: string
+  priceFen: number | null
+  quantity: number
+  servedQty: number
+  refundedQty: number
+  refundableQty: number
+}
+
+export interface OpenSessionView {
+  sessionId: number
+  shopId: number
+  signCode: string
+  version: number
+  payableFen: number | null
+  feesWaived: boolean
+  status: string
+  dishes: DishLineView[]
+}
+
+export interface LineCommandBody {
+  sessionId: number
+  version: number
+  requestKey: string
+  items: { lineId: number; quantity: number }[]
+}
+
+interface RawDish {
+  lineId?: unknown
+  name?: unknown
+  priceFen?: unknown
+  quantity?: unknown
+  servedQty?: unknown
+  refundedQty?: unknown
+  refundableQty?: unknown
+}
+
+interface RawSession {
+  sessionId?: unknown
+  shopId?: unknown
+  signCode?: unknown
+  version?: unknown
+  payableFen?: unknown
+  feesWaived?: unknown
+  status?: unknown
+  paid?: unknown
+  zeroPayReleased?: unknown
+  dishes?: unknown
+}
+
+export function presentOpenSessions(rows: RawSession[] | null | undefined, shopId: number) {
+  const visible: OpenSessionView[] = []
+  let ignored = 0
+  if (!Array.isArray(rows)) {
+    return { visible, ignored }
+  }
+  for (const row of rows) {
+    const session = presentOpenSession(row, shopId)
+    if (session) {
+      visible.push(session)
+    } else {
+      ignored++
+    }
+  }
+  return { visible, ignored }
+}
+
+export function lineCommandBlockReason(
+  shopId: number | null,
+  session: OpenSessionView | null | undefined,
+  line: DishLineView | null | undefined,
+  quantity: number,
+  action: 'serve' | 'refund'
+): string | null {
+  if (shopId == null) {
+    return '当前账号没有绑定门店'
+  }
+  if (!session || session.shopId !== shopId || !positive(session.sessionId)) {
+    return '请选择本店桌次'
+  }
+  if (!nonNegative(session.version)) {
+    return '桌次版本不完整'
+  }
+  if (!line || !session.dishes.some((item) => item.lineId === line.lineId)) {
+    return '请选择这桌的菜'
+  }
+  if (!positive(quantity)) {
+    return '请填写份数'
+  }
+  if (line.refundableQty < 1) {
+    return '这道菜没有未上桌的份数'
+  }
+  if (quantity > line.refundableQty) {
+    if (action === 'refund' && line.servedQty > 0) {
+      return '已上桌的不能退'
+    }
+    return action === 'serve' ? '上菜份数超过还没上桌的数量' : '退菜份数超过还没上桌的数量'
+  }
+  return null
+}
+
+export function lineCommandBody(
+  session: OpenSessionView,
+  shopId: number,
+  line: DishLineView,
+  quantity: number,
+  requestKey: string,
+  action: 'serve' | 'refund'
+): LineCommandBody {
+  if (lineCommandBlockReason(shopId, session, line, quantity, action) || !isRequestKey(requestKey)) {
+    throw new Error('line command rejected')
+  }
+  return {
+    sessionId: session.sessionId,
+    version: session.version,
+    requestKey,
+    items: [{ lineId: line.lineId, quantity }]
+  }
+}
+
+export function lineCommandScope(
+  action: 'serve' | 'refund',
+  sessionId: number,
+  lineId: number,
+  quantity: number
+): string {
+  return `${action}:${sessionId}:${lineId}:${quantity}`
+}
+
+export function acceptLineCommand(
+  result: SessionResult | null | undefined,
+  shopId: number,
+  sessionId: number
+) {
+  if (!result || result.shopId !== shopId || result.sessionId !== sessionId) {
+    return { ok: false as const, reason: '结果与本店桌次不一致' }
+  }
+  if (result.paid === true || result.paymentSuccess === true) {
+    return { ok: false as const, reason: '结果带了已支付标记，本页不会把它当成已付款' }
+  }
+  const released = result.zeroPayReleased === true
+  if (result.status === 'RELEASED' && !released) {
+    return { ok: false as const, reason: '桌次已释放，但不是应付为 0 的释放' }
+  }
+  if (!released && result.status !== 'OPEN') {
+    return { ok: false as const, reason: '结果不是进行中的桌次' }
+  }
+  return {
+    ok: true as const,
+    released,
+    payableFen: typeof result.payableFen === 'number' ? result.payableFen : null,
+    feesWaived: result.feesWaived === true
+  }
+}
+
+function presentOpenSession(row: RawSession | null | undefined, shopId: number): OpenSessionView | null {
+  if (!row || row.shopId !== shopId || !positive(row.sessionId) || !nonNegative(row.version)) {
+    return null
+  }
+  if (row.paid === true || row.zeroPayReleased === true || row.status !== 'OPEN') {
+    return null
+  }
+  const dishes: DishLineView[] = []
+  if (Array.isArray(row.dishes)) {
+    for (const item of row.dishes as RawDish[]) {
+      const line = presentDishLine(item)
+      if (line) {
+        dishes.push(line)
+      }
+    }
+  }
+  return {
+    sessionId: row.sessionId,
+    shopId,
+    signCode: typeof row.signCode === 'string' ? row.signCode.trim() : '',
+    version: row.version,
+    payableFen: nonNegative(row.payableFen) ? row.payableFen : null,
+    feesWaived: row.feesWaived === true,
+    status: 'OPEN',
+    dishes
+  }
+}
+
+function presentDishLine(row: RawDish | null | undefined): DishLineView | null {
+  if (!row || !positive(row.lineId) || !positive(row.quantity)) {
+    return null
+  }
+  const servedQty = nonNegative(row.servedQty) ? row.servedQty : 0
+  const refundedQty = nonNegative(row.refundedQty) ? row.refundedQty : 0
+  if (servedQty + refundedQty > row.quantity) {
+    return null
+  }
+  const room = row.quantity - servedQty - refundedQty
+  const refundableQty = nonNegative(row.refundableQty) ? Math.min(row.refundableQty, room) : room
+  return {
+    lineId: row.lineId,
+    name: typeof row.name === 'string' && row.name.trim() !== '' ? row.name : '未命名菜品',
+    priceFen: nonNegative(row.priceFen) ? row.priceFen : null,
+    quantity: row.quantity,
+    servedQty,
+    refundedQty,
+    refundableQty
+  }
+}
+
 function positive(raw: unknown): raw is number {
   return typeof raw === 'number' && Number.isSafeInteger(raw) && raw > 0
+}
+
+function nonNegative(raw: unknown): raw is number {
+  return typeof raw === 'number' && Number.isSafeInteger(raw) && raw >= 0
 }
 
 function clockSeconds(hms: string): number {

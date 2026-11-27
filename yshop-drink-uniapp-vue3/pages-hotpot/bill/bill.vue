@@ -45,10 +45,16 @@
 
 				<view class="font-size-base text-color-base hotpot-page__gap">菜品</view>
 				<view class="font-size-sm text-color-assist hotpot-page__gap" v-if="bill.dishes.length === 0">账单没有返回菜品</view>
-				<view class="hotpot-page__line" v-for="(dish, index) in bill.dishes" :key="`dish-${dish.productId}-${index}`">
-					<view class="font-size-base text-color-base">{{ dish.name }}<text v-if="dish.quantity != null"> × {{ dish.quantity }}</text></view>
+				<view class="hotpot-page__line" v-for="(dish, index) in bill.dishes" :key="`dish-${dish.lineId || dish.productId}-${index}`">
+					<view>
+						<view class="font-size-base text-color-base">{{ dish.name }}<text v-if="dish.quantity != null"> × {{ dish.quantity }}</text></view>
+						<view class="font-size-sm text-color-assist" v-if="dish.servedQty != null">已上桌 {{ dish.servedQty }}</view>
+						<view class="font-size-sm text-color-assist" v-if="dish.refundedQty != null">已退 {{ dish.refundedQty }}</view>
+						<view class="font-size-sm text-color-assist" v-if="dish.refundableQty != null">未上桌可退 {{ dish.refundableQty }}</view>
+					</view>
 					<view class="font-size-sm text-color-assist" v-if="formatFen(dish.priceFen)">￥{{ formatFen(dish.priceFen) }}</view>
 				</view>
+				<view class="font-size-sm text-color-assist hotpot-page__gap" v-if="bill.feesWaived">锅底费已免除。这不是已支付。</view>
 
 				<view class="font-size-sm text-color-assist hotpot-page__gap" v-if="!checkout">{{ BILL_CHECKOUT_GAP }}</view>
 				<view v-else>
