@@ -51,6 +51,10 @@ public class StoreOrderDO extends BaseDO {
      */
     private String requestKey;
     /**
+     * 租户编号。关闭租户时必须写 0。NULL 不参与唯一索引，同一请求键会插进两笔。
+     */
+    private Long tenantId;
+    /**
      * 额外订单号
      */
     private String extendOrderId;

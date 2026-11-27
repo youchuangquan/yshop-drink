@@ -120,6 +120,16 @@ public interface StoreOrderMapper extends BaseMapperX<StoreOrderDO> {
     }
 
 
+    /**
+     * 取消是逻辑删除，行还在，请求键也还在。这里不能带 deleted = 0，否则同一键会再下一笔活订单。
+     * 有多笔历史重复时回到 id 最小的那一笔。
+     */
+    @Select("SELECT id, order_id, uid, shop_id, request_key, tenant_id FROM yshop_store_order "
+            + "WHERE uid = #{uid} AND shop_id = #{shopId} AND request_key = #{requestKey} "
+            + "ORDER BY id ASC LIMIT 1")
+    StoreOrderDO selectByRequestKeyAnyState(@Param("uid") Long uid, @Param("shopId") Long shopId,
+                                            @Param("requestKey") String requestKey);
+
     @Select("select IFNULL(sum(pay_price),0) from yshop_store_order " +
             "where paid=1 and deleted=0 and refund_status=0 and uid=#{uid}")
     double sumPrice(@Param("uid") Long uid);
