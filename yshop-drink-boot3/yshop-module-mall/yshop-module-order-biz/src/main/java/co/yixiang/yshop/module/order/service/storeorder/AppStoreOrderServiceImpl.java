@@ -315,7 +315,7 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
             storeOrder.setFlavorPrice(quote.flavorAmount);
             storeOrder.setAddonPrice(quote.addonAmount);
             storeOrder.setDeductionPrice(deductionPrice);
-            storeOrder.setPaid(OrderInfoEnum.PAY_STATUS_0.getValue());
+            initializeFulfillment(storeOrder);
             storeOrder.setPayType(param.getPayType());
             storeOrder.setUseIntegral(BigDecimal.ZERO);
             storeOrder.setBackIntegral(BigDecimal.ZERO);
@@ -1045,6 +1045,14 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
 
 
     /**
+     * 顾客下单时显式写成未支付、履约默认。不依赖表字段默认值。
+     */
+    static void initializeFulfillment(StoreOrderDO order) {
+        order.setPaid(OrderInfoEnum.PAY_STATUS_0.getValue());
+        order.setStatus(OrderInfoEnum.STATUS_0.getValue());
+    }
+
+    /**
      * 订单确认收货
      *
      * @param orderId 单号
@@ -1053,6 +1061,9 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
     @Override
     public void takeOrder(String orderId, Long uid, Long shopId) {
         AppStoreOrderQueryVo order = requireCustomerOrder(orderId, uid, shopId);
+        if (TakeoutDeliveryStatus.legacyWriteBlocked(order.getOrderType())) {
+            throw exception(ORDER_STATUS_ERROR);
+        }
 
         if (OrderInfoEnum.PAY_STATUS_0.getValue().equals(order.getPaid())) {
             throw exception(ORDER_STATUS_ERROR);

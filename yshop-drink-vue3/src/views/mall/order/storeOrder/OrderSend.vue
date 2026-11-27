@@ -125,6 +125,10 @@ const submitForm = async () => {
   formLoading.value = true
   try {
     const data = formData.value as unknown as StoreOrderApi.StoreOrderVO
+    if (data.orderType === 'takeout') {
+      window.print()
+      return
+    }
     data.updateType = 'orderSend'
     await StoreOrderApi.updateStoreOrder(data)
     message.success(t('common.updateSuccess'))

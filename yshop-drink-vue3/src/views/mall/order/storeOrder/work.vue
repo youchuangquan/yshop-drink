@@ -65,6 +65,14 @@
              <div>下单时间:{{ formatDate(order.createTime) }}</div>
              <div>取餐时间:{{ formatDate(order.getTime) }}</div>
              <div>类型:{{ order.orderType == 'takeout' ? '外卖' : '自取' }}</div>
+             <template v-if="order.orderType == 'takeout'">
+               <div v-if="order.realName">收货人:{{ order.realName }}</div>
+               <div v-if="order.userPhone">联系电话:{{ order.userPhone }}</div>
+               <div v-if="order.userAddress">收货地址:{{ order.userAddress }}</div>
+               <div v-if="order.packingPrice != null">打包费:{{ order.packingPrice }}</div>
+               <div v-if="order.payPostage != null">支付邮费:{{ order.payPostage }}</div>
+               <div v-if="order.payPrice != null">实际支付:{{ order.payPrice }}</div>
+             </template>
              <div>  
                <el-button
                  type="primary"
@@ -76,6 +84,20 @@
                  @click="openForm('orderSend', order.id)"
                  v-hasPermi="['order:store-order:update']"
                >出单</el-button>
+               <el-button
+                 v-if="showDeliveryButton(order, 1)"
+                 type="primary"
+                 :loading="deliveryId === order.id"
+                 @click="moveDelivery(order, 1)"
+                 v-hasPermi="['order:store-order:update']"
+               >待收货</el-button>
+               <el-button
+                 v-if="showDeliveryButton(order, 2)"
+                 type="primary"
+                 :loading="deliveryId === order.id"
+                 @click="moveDelivery(order, 2)"
+                 v-hasPermi="['order:store-order:update']"
+               >已收货</el-button>
                <el-button
                  type="danger"
                  @click="handleDelete(order.id)"
@@ -131,6 +153,38 @@ const queryFormRef = ref() // 搜索的表单
 const exportLoading = ref(false) // 导出的加载中
 
 const activeName = ref('first')
+const deliveryId = ref<number | null>(null)
+
+const showDeliveryButton = (order, target: 1 | 2) => {
+  if (!order || order.orderType !== 'takeout') {
+    return false
+  }
+  if (Number(order.paid) !== 1 || Number(order.refundStatus) !== 0) {
+    return false
+  }
+  const status = Number(order.status)
+  if (status === 2 || status === 3) {
+    return false
+  }
+  if (target === 1) {
+    return status === 0
+  }
+  return target === 2 && status === 1
+}
+
+const moveDelivery = async (order, status: 1 | 2) => {
+  if (!showDeliveryButton(order, status) || deliveryId.value != null) {
+    return
+  }
+  deliveryId.value = order.id
+  try {
+    await StoreOrderApi.updateDeliveryStatus({ id: order.id, status })
+    message.success(t('common.updateSuccess'))
+    await getList()
+  } finally {
+    deliveryId.value = null
+  }
+}
 
 
 
@@ -143,10 +197,23 @@ const handleClick = (tab: TabsPaneContext, event: Event) => {
 const getList = async () => {
  loading.value = true
  try {
-   const data = await StoreOrderApi.getStoreOrderPage(queryParams)
-   list.value = data.list
-   //console.log("aa:",list.value)
-   total.value = data.total
+   const waiting = await StoreOrderApi.getStoreOrderPage(queryParams)
+   const delivering = await StoreOrderApi.getStoreOrderPage({
+     ...queryParams,
+     orderStatus: 2,
+     orderType: 'takeout'
+   })
+   const seen = new Set()
+   const merged = []
+   for (const row of [...(waiting.list || []), ...(delivering.list || [])]) {
+     if (seen.has(row.id)) {
+       continue
+     }
+     seen.add(row.id)
+     merged.push(row)
+   }
+   list.value = merged
+   total.value = merged.length
  } finally {
    loading.value = false
  }

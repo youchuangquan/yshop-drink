@@ -60,6 +60,13 @@ public class StoreOrderController {
         return success(true);
     }
 
+    @PutMapping("/delivery-status")
+    @Operation(summary = "更新外卖配送状态")
+    @PreAuthorize("@ss.hasPermission('order:store-order:update')")
+    public CommonResult<StoreOrderRespVO> updateDeliveryStatus(@Valid @RequestBody StoreOrderDeliveryStatusReqVO reqVO) {
+        return success(storeOrderService.updateDeliveryStatus(reqVO));
+    }
+
     @DeleteMapping("/delete")
     @Operation(summary = "删除订单")
     @Parameter(name = "id", description = "编号", required = true)
