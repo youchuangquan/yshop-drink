@@ -364,10 +364,14 @@ export function presentBill(bill) {
     : []
   const dishes = Array.isArray(bill.dishes)
     ? bill.dishes.filter((dish) => dish && (dish.name || dish.productId != null)).map((dish) => ({
+      lineId: idReady(dish.lineId) ? dish.lineId : null,
       productId: dish.productId,
       name: lineName(dish.name),
       priceFen: integerFen(dish.priceFen),
       quantity: typeof dish.quantity === 'number' && Number.isInteger(dish.quantity) && dish.quantity >= 1 ? dish.quantity : null,
+      servedQty: nonNegativeInt(dish.servedQty),
+      refundedQty: nonNegativeInt(dish.refundedQty),
+      refundableQty: nonNegativeInt(dish.refundableQty),
     }))
     : []
   return {
@@ -375,9 +379,14 @@ export function presentBill(bill) {
     version: typeof bill.version === 'number' && Number.isInteger(bill.version) && bill.version >= 0 ? bill.version : null,
     payableFen: integerFen(bill.payableFen),
     status: typeof bill.status === 'string' ? bill.status : '',
+    feesWaived: bill.feesWaived === true,
     pots,
     dishes,
   }
+}
+
+function nonNegativeInt(value) {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null
 }
 
 export function checkoutBody(bill) {

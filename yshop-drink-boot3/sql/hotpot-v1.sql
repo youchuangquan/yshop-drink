@@ -7,6 +7,7 @@
 -- 这一轮没有接通微信、支付宝、余额或现金。账单没有“已付金额”列，不能把未接通的支付写成已付。
 -- 应付为 0 时释放的是开台时钉住的 slot_id。那一次不是支付成功。
 -- 已经执行过本文件、但还没有 start_time 的库，再执行一次 hotpot-page-gap-v1.sql。
+-- 已经执行过本文件、但菜品行还没有 served_qty 的库，再执行一次 hotpot-serve-refund-v1.sql。
 
 CREATE TABLE IF NOT EXISTS `yshop_hotpot_slot` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT 'id',
@@ -69,8 +70,9 @@ CREATE TABLE IF NOT EXISTS `yshop_hotpot_session` (
   `hold_id` bigint NULL DEFAULT NULL COMMENT '覆盖这次开台的占位',
   `owner_uid` bigint NOT NULL DEFAULT '0' COMMENT '顾客。0 表示没有绑定顾客',
   `version` int NOT NULL COMMENT '结账版本',
-  `payable_fen` int NOT NULL DEFAULT '0' COMMENT '应付，分。只累加本店锅底价',
+  `payable_fen` int NOT NULL DEFAULT '0' COMMENT '应付，分。未退菜品按原价；免单后不再计锅底。只是缓存',
   `zero_pay` tinyint NOT NULL DEFAULT '0' COMMENT '1 表示应付为 0 已释放。不是支付成功',
+  `fees_waived` tinyint NOT NULL DEFAULT '0' COMMENT '1 表示锅底费不再计入应付。不删除锅底行',
   `status` varchar(16) NOT NULL COMMENT 'OPEN 或 RELEASED',
   `request_key` varchar(64) NOT NULL COMMENT '开台请求键',
   `creator` varchar(64) DEFAULT '' COMMENT '创建者',
@@ -107,7 +109,9 @@ CREATE TABLE IF NOT EXISTS `yshop_hotpot_session_dish` (
   `product_id` bigint NOT NULL COMMENT '本店商品',
   `name` varchar(128) NOT NULL COMMENT '下单时的商品名称',
   `price_fen` int NOT NULL COMMENT '下单时的标价，分。不另编',
-  `quantity` int NOT NULL COMMENT '份数',
+  `quantity` int NOT NULL COMMENT '下单份数。上菜和退菜都不改它',
+  `served_qty` int NOT NULL DEFAULT '0' COMMENT '已上桌份数。不减少原始 quantity',
+  `refunded_qty` int NOT NULL DEFAULT '0' COMMENT '未上桌已退份数。已上桌的不能退',
   `creator` varchar(64) DEFAULT '' COMMENT '创建者',
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `updater` varchar(64) DEFAULT '' COMMENT '更新者',
@@ -115,7 +119,8 @@ CREATE TABLE IF NOT EXISTS `yshop_hotpot_session_dish` (
   `deleted` bit(1) NOT NULL DEFAULT b'0' COMMENT '是否删除',
   `tenant_id` bigint NOT NULL DEFAULT '0' COMMENT '租户编号',
   PRIMARY KEY (`id`),
-  KEY `idx_hotpot_session_dish_shop` (`shop_id`, `session_id`)
+  KEY `idx_hotpot_session_dish_shop` (`shop_id`, `session_id`),
+  CONSTRAINT `chk_hotpot_dish_served_refunded` CHECK (`served_qty` >= 0 AND `refunded_qty` >= 0 AND `served_qty` + `refunded_qty` <= `quantity`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='开台菜品';
 
 CREATE TABLE IF NOT EXISTS `yshop_shop_pot` (

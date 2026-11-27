@@ -1,5 +1,6 @@
 package co.yixiang.yshop.module.store.service.hotpot;
 
+import co.yixiang.yshop.framework.common.hotpot.HotpotFlow;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotBoundBillResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotHoldResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotStaffHoldResp;
@@ -53,6 +54,23 @@ public interface HotpotService {
 
     HotpotSessionResp addPot(long shopId, long sessionId, long potId, int version, long actorUid, boolean staff,
                              String requestKey);
+
+    /**
+     * 本店进行中的台次。店从登录的店员来，不从顾客请求来。
+     */
+    List<HotpotSessionResp> listOpenSessions(long shopId);
+
+    /**
+     * 店员登记上菜。调用方必须已经确认是这家店的店员。
+     */
+    HotpotSessionResp serve(long shopId, long sessionId, int version, String requestKey,
+                            List<HotpotFlow.LineQty> items);
+
+    /**
+     * 店员退还未上桌的份数。顾客不能走这里。全退且应付为 0 时在同一次里释放桌台。
+     */
+    HotpotSessionResp refund(long shopId, long sessionId, int version, String requestKey,
+                             List<HotpotFlow.LineQty> items);
 
     HotpotSessionResp settle(long actorUid, long sessionId, int version, boolean staff, Long staffShop);
 

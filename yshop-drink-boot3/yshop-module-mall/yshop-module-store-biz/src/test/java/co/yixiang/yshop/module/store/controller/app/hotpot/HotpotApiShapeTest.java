@@ -28,6 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class HotpotApiShapeTest {
 
@@ -124,6 +125,46 @@ class HotpotApiShapeTest {
         assertNotNull(holds.getAnnotation(PreAuthorize.class));
         assertEquals("/hold", holds.getAnnotation(GetMapping.class).value()[0]);
         assertEquals(0, holds.getParameterCount());
+    }
+
+    @Test
+    void staffServeAndRefundStayOffTheCustomerApi() throws Exception {
+        assertEquals(List.of("sessionId", "version", "requestKey", "items"), names(AdminHotpotCommands.Serve.class));
+        assertEquals(List.of("sessionId", "version", "requestKey", "items"), names(AdminHotpotCommands.Refund.class));
+        assertEquals(List.of("lineId", "quantity"), names(AdminHotpotCommands.LineQty.class));
+        assertEquals(List.of("lineId", "productId", "name", "priceFen", "quantity", "servedQty", "refundedQty",
+                "refundableQty"), names(HotpotSessionResp.DishLine.class));
+        assertEquals(List.of("lineId", "productId", "name", "priceFen", "quantity", "servedQty", "refundedQty",
+                "refundableQty"), names(HotpotBoundBillResp.DishLine.class));
+        assertTrue(names(HotpotSessionResp.class).contains("signCode"));
+        assertTrue(names(HotpotSessionResp.class).contains("feesWaived"));
+        assertFalse(names(AdminHotpotCommands.Serve.class).contains("shopId"));
+        assertFalse(names(AdminHotpotCommands.Refund.class).contains("shopId"));
+
+        Method list = AdminHotpotController.class.getMethod("listSessions");
+        assertEquals("/session", list.getAnnotation(GetMapping.class).value()[0]);
+        assertEquals("@ss.hasPermission('store:shop:query')", list.getAnnotation(PreAuthorize.class).value());
+        assertEquals(0, list.getParameterCount());
+
+        Method serve = AdminHotpotController.class.getMethod("serve", AdminHotpotCommands.Serve.class);
+        assertEquals("/session/serve", serve.getAnnotation(PostMapping.class).value()[0]);
+        assertEquals("@ss.hasPermission('store:shop:query')", serve.getAnnotation(PreAuthorize.class).value());
+        assertEquals(1, serve.getParameterCount());
+
+        Method refund = AdminHotpotController.class.getMethod("refund", AdminHotpotCommands.Refund.class);
+        assertEquals("/session/refund", refund.getAnnotation(PostMapping.class).value()[0]);
+        assertEquals("@ss.hasPermission('store:shop:update')", refund.getAnnotation(PreAuthorize.class).value());
+
+        for (Method method : AppHotpotController.class.getDeclaredMethods()) {
+            String name = method.getName().toLowerCase();
+            assertFalse(name.contains("refund"), method.getName());
+            assertFalse(name.equals("serve"), method.getName());
+        }
+        for (Class<?> nested : AppHotpotCommands.class.getDeclaredClasses()) {
+            String name = nested.getSimpleName().toLowerCase();
+            assertFalse(name.contains("refund"));
+            assertFalse(name.equals("serve"));
+        }
     }
 
     private static List<String> names(Class<?> type) {

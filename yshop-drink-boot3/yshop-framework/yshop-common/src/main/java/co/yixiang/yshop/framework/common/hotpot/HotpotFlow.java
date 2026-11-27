@@ -8,6 +8,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,11 +26,16 @@ import static co.yixiang.yshop.framework.common.exception.util.ServiceExceptionU
  * 锅底价格只来自本店已有配置，菜品价格只来自本店在售商品。没有接通的收款渠道不能把账单标成已付。
  * 顾客看桌或扫码不占桌。顾客占桌只发生在第一道菜下单时。店员可以把预约安排到空桌并开出台次。
  * 时段起止只给店员看是否已过点，这里不比较时钟，也不因此取消预约或释放容量。
+ * 上菜和未上桌退菜只改菜品行上的份数，不改原始 quantity。请求键只记住这一次尝试，不另记一份数量。
+ * 每一行都退完时免除锅底费；没有陪客费。应付因此变成 0 就沿用应付为 0 的释放，不算支付成功。
  */
 public final class HotpotFlow {
 
     public static final String DISPOSITION_ZERO_PAY = "ZERO_PAY";
     public static final String DISPOSITION_UNCONNECTED = "UNCONNECTED";
+    private static final String ACTION_SERVE = "SERVE";
+    private static final String ACTION_REFUND = "REFUND";
+    private static final int REQUEST_MARK_MAX = 128;
 
     private HotpotFlow() {
     }
@@ -139,6 +145,8 @@ public final class HotpotFlow {
         public int payableFen;
         public boolean paid;
         public boolean zeroPayReleased;
+        /** 免除锅底费。不删除锅底行。没有陪客费时，这一项不再另计。 */
+        public boolean feesWaived;
         public SessionStatus status;
         public String requestKey;
         public final List<SessionPot> pots = new ArrayList<>();
@@ -152,8 +160,29 @@ public final class HotpotFlow {
         public long productId;
         public String name;
         public int priceFen;
+        /** 下单份数。上菜和退菜都不改它。 */
         public int quantity;
+        public int servedQty;
+        public int refundedQty;
         public boolean persisted;
+        public boolean dirty;
+
+        public int refundableQty() {
+            return quantity - servedQty - refundedQty;
+        }
+    }
+
+    /**
+     * 一次上菜或退菜里的一行。quantity 是这次要登记的份数，不是行上的原始份数。
+     */
+    public static final class LineQty {
+        public final long lineId;
+        public final int quantity;
+
+        public LineQty(long lineId, int quantity) {
+            this.lineId = lineId;
+            this.quantity = quantity;
+        }
     }
 
     /**
@@ -651,6 +680,9 @@ public final class HotpotFlow {
             throw exception(BAD_REQUEST);
         }
         Pot pot = resolvePot(board, shopId, potId);
+        if (!session.pots.isEmpty()) {
+            throw exception(BAD_REQUEST);
+        }
         SessionPot line = new SessionPot();
         line.id = board.nextId();
         line.potId = pot.id;
@@ -670,6 +702,78 @@ public final class HotpotFlow {
         }
         touch(board);
         return session;
+    }
+
+    /**
+     * 本店进行中的台次。已支付、已释放的不算。店员靠它看到桌号、版本和菜品行。
+     */
+    public static List<Session> openSessions(Board board, long shopId) {
+        shopId = ShopAccess.requirePositiveShopId(shopId);
+        List<Session> rows = new ArrayList<>();
+        for (Session session : board.sessions.values()) {
+            if (session.shopId != shopId || session.status != SessionStatus.OPEN || session.paid
+                    || session.zeroPayReleased) {
+                continue;
+            }
+            rows.add(session);
+        }
+        return rows;
+    }
+
+    /**
+     * 店员登记上菜。只增加 servedQty。顾客、他店、已支付或已释放的台次都拒绝。
+     * 同一个请求键配同一份明细只生效一次。键相同、明细不同则拒绝。
+     */
+    public static Session serve(Board board, long shopId, long sessionId, int version, boolean staff, String rawKey,
+                                List<LineQty> items) {
+        Session session = requireStaffSession(board, shopId, sessionId, staff);
+        List<LineQty> lines = normalize(items);
+        String stamp = stampOf(lines);
+        if (replay(board, session, rawKey, ACTION_SERVE, stamp)) {
+            return session;
+        }
+        refuseUnusable(session);
+        if (session.version != version) {
+            throw exception(BAD_REQUEST);
+        }
+        applyQty(session, lines, true);
+        recompute(session);
+        remember(board, session.shopId, session.ownerUid, session.slotId, ACTION_SERVE,
+                OrderRequestKeys.require(rawKey), session.holdId, session.id, null, null, stamp);
+        return session;
+    }
+
+    /**
+     * 店员退还未上桌的份数。已上桌的不能退。顾客不能退。
+     * 每一行都退完时免除锅底费，锅底行留着。没有陪客费，所以这一项不做别的事。
+     * 免除之后应付变为 0，就在这一次里按应付为 0 释放桌台。paid 仍是 false，也不走收款。
+     */
+    public static Settlement refund(Board board, long shopId, long sessionId, int version, boolean staff, String rawKey,
+                                   List<LineQty> items) {
+        Session session = requireStaffSession(board, shopId, sessionId, staff);
+        List<LineQty> lines = normalize(items);
+        String stamp = stampOf(lines);
+        if (replay(board, session, rawKey, ACTION_REFUND, stamp)) {
+            return clearance(session);
+        }
+        refuseUnusable(session);
+        if (session.version != version) {
+            throw exception(BAD_REQUEST);
+        }
+        applyQty(session, lines, false);
+        if (everyLineRefunded(session)) {
+            session.feesWaived = true;
+        }
+        recompute(session);
+        if (everyLineRefunded(session) && session.payableFen == 0 && session.status == SessionStatus.OPEN) {
+            releasePinned(board, session);
+            session.zeroPayReleased = true;
+            session.paid = false;
+            session.dirty = session.persisted;
+        }
+        remember(board, session.shopId, session.ownerUid, session.slotId, ACTION_REFUND,
+                OrderRequestKeys.require(rawKey), session.holdId, session.id, null, null, stamp);
+        return clearance(session);
     }
 
     /**
@@ -1202,11 +1306,19 @@ public final class HotpotFlow {
 
     private static int payable(Session session) {
         long sum = 0;
-        for (SessionPot line : session.pots) {
-            sum += line.priceFen;
+        if (!session.feesWaived) {
+            for (SessionPot line : session.pots) {
+                sum += line.priceFen;
+            }
+            // 没有按人的陪客费。免除费用时锅底不再计入，陪客费这一项仍然是 0。
         }
         for (SessionDish line : session.dishes) {
-            long row = (long) line.priceFen * line.quantity;
+            if (line.servedQty < 0 || line.refundedQty < 0
+                    || (long) line.servedQty + line.refundedQty > line.quantity) {
+                throw exception(BAD_REQUEST);
+            }
+            int billable = line.quantity - line.refundedQty;
+            long row = (long) line.priceFen * billable;
             if (row < 0) {
                 throw exception(BAD_REQUEST);
             }
@@ -1216,6 +1328,130 @@ public final class HotpotFlow {
             throw exception(BAD_REQUEST);
         }
         return (int) sum;
+    }
+
+    private static Session requireStaffSession(Board board, long shopId, long sessionId, boolean staff) {
+        long shop = ShopAccess.requirePositiveShopId(shopId);
+        if (!staff) {
+            throw exception(FORBIDDEN);
+        }
+        if (sessionId <= 0) {
+            throw exception(BAD_REQUEST);
+        }
+        Session session = board.sessions.get(sessionId);
+        if (session == null) {
+            throw exception(NOT_FOUND);
+        }
+        if (session.shopId != shop) {
+            throw exception(FORBIDDEN);
+        }
+        return session;
+    }
+
+    private static boolean replay(Board board, Session session, String rawKey, String action, String stamp) {
+        RequestUse prior = lookup(board, session.shopId, session.ownerUid, session.slotId, rawKey);
+        if (prior == null) {
+            return false;
+        }
+        if (action.equals(prior.action) && stamp.equals(prior.mark) && prior.sessionId != null
+                && prior.sessionId == session.id) {
+            return true;
+        }
+        throw exception(BAD_REQUEST);
+    }
+
+    private static List<LineQty> normalize(List<LineQty> items) {
+        if (items == null || items.isEmpty()) {
+            throw exception(BAD_REQUEST);
+        }
+        List<LineQty> copy = new ArrayList<>();
+        for (LineQty item : items) {
+            if (item == null || item.lineId <= 0 || item.quantity <= 0) {
+                throw exception(BAD_REQUEST);
+            }
+            copy.add(item);
+        }
+        copy.sort(Comparator.comparingLong(item -> item.lineId));
+        for (int i = 1; i < copy.size(); i++) {
+            if (copy.get(i).lineId == copy.get(i - 1).lineId) {
+                throw exception(BAD_REQUEST);
+            }
+        }
+        return copy;
+    }
+
+    private static String stampOf(List<LineQty> lines) {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < lines.size(); i++) {
+            if (i > 0) {
+                text.append(',');
+            }
+            text.append(lines.get(i).lineId).append(':').append(lines.get(i).quantity);
+        }
+        if (text.length() > REQUEST_MARK_MAX) {
+            throw exception(BAD_REQUEST);
+        }
+        return text.toString();
+    }
+
+    private static void applyQty(Session session, List<LineQty> lines, boolean serve) {
+        SessionDish[] found = new SessionDish[lines.size()];
+        int[] served = new int[lines.size()];
+        int[] refunded = new int[lines.size()];
+        for (int i = 0; i < lines.size(); i++) {
+            LineQty item = lines.get(i);
+            SessionDish line = null;
+            for (SessionDish candidate : session.dishes) {
+                if (candidate.id == item.lineId) {
+                    line = candidate;
+                    break;
+                }
+            }
+            if (line == null) {
+                throw exception(BAD_REQUEST);
+            }
+            long nextServed = line.servedQty + (serve ? item.quantity : 0);
+            long nextRefunded = line.refundedQty + (serve ? 0 : item.quantity);
+            if (nextServed < 0 || nextRefunded < 0 || nextServed + nextRefunded > line.quantity
+                    || nextServed > Integer.MAX_VALUE || nextRefunded > Integer.MAX_VALUE) {
+                throw exception(BAD_REQUEST);
+            }
+            found[i] = line;
+            served[i] = (int) nextServed;
+            refunded[i] = (int) nextRefunded;
+        }
+        for (int i = 0; i < lines.size(); i++) {
+            found[i].servedQty = served[i];
+            found[i].refundedQty = refunded[i];
+            if (found[i].persisted) {
+                found[i].dirty = true;
+            }
+        }
+    }
+
+    private static boolean everyLineRefunded(Session session) {
+        if (session.dishes.isEmpty()) {
+            return false;
+        }
+        for (SessionDish line : session.dishes) {
+            if (line.servedQty != 0 || line.refundedQty != line.quantity) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static void recompute(Session session) {
+        session.payableFen = payable(session);
+        session.version = session.version + 1;
+        session.dirty = session.persisted;
+    }
+
+    private static Settlement clearance(Session session) {
+        if (session.zeroPayReleased) {
+            return new Settlement(session, false, true, DISPOSITION_ZERO_PAY);
+        }
+        return new Settlement(session, false, false, null);
     }
 
     private static Session appendDish(Board board, long shopId, Slot slot, Table table, Session session, long actorUid,

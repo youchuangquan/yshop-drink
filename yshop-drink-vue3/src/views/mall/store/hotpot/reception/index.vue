@@ -156,26 +156,121 @@
       </el-table-column>
     </el-table>
   </ContentWrap>
+
+  <ContentWrap v-if="shopId != null" title="进行中桌次">
+    <el-alert
+      class="mb-15px"
+      type="info"
+      :closable="false"
+      show-icon
+      title="登记已上桌的份数，或退还没上桌的份数。下单份数不会改小。已上桌的不能退。这里不结账，也不收款。"
+    />
+    <el-alert
+      v-if="ignoredSessions > 0"
+      class="mb-15px"
+      type="warning"
+      :closable="false"
+      show-icon
+      :title="`有 ${ignoredSessions} 条桌次不属于本店或已不在进行中，已从列表中去掉。`"
+    />
+    <div v-if="!loading && sessions.length === 0">本店没有进行中的桌次。</div>
+    <div v-for="session in sessions" :key="session.sessionId" class="mt-15px">
+      <div>
+        桌台 {{ session.signCode || '未绑定桌台' }} · 桌次 {{ session.sessionId }} · 版本
+        {{ session.version }} · 应付 {{ session.payableFen == null ? '未返回' : `${session.payableFen} 分` }}
+      </div>
+      <div v-if="session.feesWaived" class="mt-10px">锅底费已免除。锅底仍留在这桌，不计应付。</div>
+      <div v-if="session.dishes.length === 0" class="mt-10px">这桌没有菜品行。</div>
+      <el-table v-else v-loading="loading" :data="session.dishes" class="mt-10px">
+        <el-table-column label="菜品" align="center" prop="name" min-width="120" />
+        <el-table-column label="下单" align="center" prop="quantity" />
+        <el-table-column label="已上桌" align="center" prop="servedQty" />
+        <el-table-column label="已退" align="center" prop="refundedQty" />
+        <el-table-column label="未上桌可退" align="center" prop="refundableQty" />
+        <el-table-column label="上菜" align="center" min-width="220">
+          <template #default="scope">
+            <template v-if="scope.row.refundableQty > 0">
+              <el-input-number
+                :model-value="draftQty('serve', session.sessionId, scope.row)"
+                :min="1"
+                :max="scope.row.refundableQty"
+                :step="1"
+                step-strictly
+                class="!w-120px mr-5px"
+                :disabled="pendingLine != null"
+                @change="(value) => setDraft('serve', session.sessionId, scope.row.lineId, value)"
+              />
+              <el-button
+                link
+                type="primary"
+                :disabled="serveBlocked(session, scope.row)"
+                :loading="pendingLine === lineToken('serve', session.sessionId, scope.row.lineId)"
+                v-hasPermi="['store:shop:query']"
+                @click="serveLine(session, scope.row)"
+              >
+                登记上菜
+              </el-button>
+            </template>
+            <span v-else>没有未上桌的份数</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="退未上桌" align="center" min-width="220">
+          <template #default="scope">
+            <template v-if="scope.row.refundableQty > 0">
+              <el-input-number
+                :model-value="draftQty('refund', session.sessionId, scope.row)"
+                :min="1"
+                :max="scope.row.refundableQty"
+                :step="1"
+                step-strictly
+                class="!w-120px mr-5px"
+                :disabled="pendingLine != null"
+                @change="(value) => setDraft('refund', session.sessionId, scope.row.lineId, value)"
+              />
+              <el-button
+                link
+                type="primary"
+                :disabled="refundBlocked(session, scope.row)"
+                :loading="pendingLine === lineToken('refund', session.sessionId, scope.row.lineId)"
+                v-hasPermi="['store:shop:update']"
+                @click="refundLine(session, scope.row)"
+              >
+                退未上桌
+              </el-button>
+            </template>
+            <span v-else>{{ scope.row.servedQty > 0 ? '已上桌的不能退' : '没有可退份数' }}</span>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+  </ContentWrap>
 </template>
 
 <script setup lang="ts" name="HotpotReception">
 import * as HotpotApi from '@/api/mall/store/hotpot'
 import { useUserStore } from '@/store/modules/user'
 import {
+  acceptLineCommand,
   acceptOpen,
   acceptReservationSeat,
   acceptSeat,
   boundShopId,
   canAssignTable,
   canSeat,
+  claimRequestKey,
   createRequestKey,
   forgetRequestKey,
   holdStatusText,
   lateArrivalFlag,
+  lineCommandBlockReason,
+  lineCommandBody,
+  lineCommandScope,
   openBlockReason,
   openBody,
   openScope,
   partitionByShop,
+  presentOpenSessions,
+  releaseRequestKey,
   reservationSeatBlockReason,
   reservationSeatBody,
   reservationSeatScope,
@@ -183,7 +278,9 @@ import {
   seatScope,
   slotClockText,
   stableRequestKey,
+  type DishLineView,
   type HoldView,
+  type OpenSessionView,
   type SlotView,
   type TableView
 } from './reception'
@@ -201,12 +298,17 @@ const assignSign = ref<Record<number, string>>({})
 const holds = ref<HoldView[]>([])
 const slots = ref<SlotView[]>([])
 const tables = ref<TableView[]>([])
+const sessions = ref<OpenSessionView[]>([])
 const ignoredHolds = ref(0)
 const ignoredSlots = ref(0)
 const ignoredTables = ref(0)
+const ignoredSessions = ref(0)
 const slotId = ref<number | undefined>(undefined)
 const signCode = ref<string | undefined>(undefined)
+const pendingLine = ref<string | null>(null)
+const drafts = ref<Record<string, number>>({})
 const requestKeys = new Map<string, string>()
+const inflightKeys = new Set<string>()
 
 const selectedSlot = computed(() => slots.value.find((slot) => slot.slotId === slotId.value) ?? null)
 const selectedTable = computed(
@@ -265,25 +367,30 @@ const reload = async () => {
     holds.value = []
     slots.value = []
     tables.value = []
+    sessions.value = []
     return
   }
   loading.value = true
   clock.value = new Date()
   try {
-    const [holdRows, slotRows, tableRows] = await Promise.all([
+    const [holdRows, slotRows, tableRows, sessionRows] = await Promise.all([
       HotpotApi.listHolds(),
       HotpotApi.listSlots(),
-      HotpotApi.listTables()
+      HotpotApi.listTables(),
+      HotpotApi.listOpenSessions()
     ])
     const holdPart = partitionByShop(holdRows, currentShop)
     const slotPart = partitionByShop(slotRows, currentShop)
     const tablePart = partitionByShop(tableRows, currentShop)
+    const sessionPart = presentOpenSessions(sessionRows, currentShop)
     holds.value = holdPart.visible
     slots.value = slotPart.visible
     tables.value = tablePart.visible
+    sessions.value = sessionPart.visible
     ignoredHolds.value = holdPart.ignored
     ignoredSlots.value = slotPart.ignored
     ignoredTables.value = tablePart.ignored
+    ignoredSessions.value = sessionPart.ignored
     if (selectedSlot.value == null) {
       slotId.value = undefined
     }
@@ -430,6 +537,115 @@ const openTable = async () => {
   } finally {
     opening.value = false
   }
+}
+
+const draftKey = (action: 'serve' | 'refund', sessionId: number, lineId: number) => {
+  return `${action}:${sessionId}:${lineId}`
+}
+
+const lineToken = (action: 'serve' | 'refund', sessionId: number, lineId: number) => {
+  return draftKey(action, sessionId, lineId)
+}
+
+const draftQty = (action: 'serve' | 'refund', sessionId: number, line: DishLineView) => {
+  const stored = drafts.value[draftKey(action, sessionId, line.lineId)]
+  if (typeof stored === 'number' && stored >= 1 && stored <= line.refundableQty) {
+    return stored
+  }
+  return line.refundableQty >= 1 ? 1 : undefined
+}
+
+const setDraft = (action: 'serve' | 'refund', sessionId: number, lineId: number, value: unknown) => {
+  const next = { ...drafts.value }
+  const key = draftKey(action, sessionId, lineId)
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 1) {
+    next[key] = value
+  } else {
+    delete next[key]
+  }
+  drafts.value = next
+}
+
+const serveBlocked = (session: OpenSessionView, line: DishLineView) => {
+  return (
+    pendingLine.value != null ||
+    lineCommandBlockReason(shopId.value, session, line, draftQty('serve', session.sessionId, line) ?? 0, 'serve') !=
+      null
+  )
+}
+
+const refundBlocked = (session: OpenSessionView, line: DishLineView) => {
+  return (
+    pendingLine.value != null ||
+    lineCommandBlockReason(
+      shopId.value,
+      session,
+      line,
+      draftQty('refund', session.sessionId, line) ?? 0,
+      'refund'
+    ) != null
+  )
+}
+
+const submitLine = async (action: 'serve' | 'refund', session: OpenSessionView, line: DishLineView) => {
+  const currentShop = shopId.value
+  const quantity = draftQty(action, session.sessionId, line) ?? 0
+  const token = lineToken(action, session.sessionId, line.lineId)
+  if (currentShop == null || pendingLine.value != null) {
+    return
+  }
+  if (lineCommandBlockReason(currentShop, session, line, quantity, action)) {
+    return
+  }
+  pendingLine.value = token
+  const verb = action === 'serve' ? '登记上菜' : '退还未上桌的份数'
+  try {
+    await message.confirm(`确认${verb} ${quantity} 份？这一步不结账，也不收款。`)
+  } catch {
+    pendingLine.value = null
+    return
+  }
+  const scope = lineCommandScope(action, session.sessionId, line.lineId, quantity)
+  let requestKey = ''
+  try {
+    requestKey = stableRequestKey(requestKeys, scope, createRequestKey)
+    if (!claimRequestKey(inflightKeys, requestKey)) {
+      message.warning('这一笔正在提交')
+      return
+    }
+    const body = lineCommandBody(session, currentShop, line, quantity, requestKey, action)
+    const result =
+      action === 'serve' ? await HotpotApi.serveDishes(body) : await HotpotApi.refundDishes(body)
+    const accepted = acceptLineCommand(result, currentShop, session.sessionId)
+    if (!accepted.ok) {
+      message.error(accepted.reason)
+      return
+    }
+    forgetRequestKey(requestKeys, scope)
+    if (accepted.released) {
+      message.success('未上桌的菜已退完，应付为 0，桌次已释放。这不是支付成功。')
+    } else if (action === 'serve') {
+      message.success('已登记上菜')
+    } else {
+      message.success('已退还未上桌的份数')
+    }
+    await reload()
+  } catch {
+    // 失败时保留同一个请求键，避免同一份明细重试再记一笔。
+  } finally {
+    if (requestKey) {
+      releaseRequestKey(inflightKeys, requestKey)
+    }
+    pendingLine.value = null
+  }
+}
+
+const serveLine = (session: OpenSessionView, line: DishLineView) => {
+  return submitLine('serve', session, line)
+}
+
+const refundLine = (session: OpenSessionView, line: DishLineView) => {
+  return submitLine('refund', session, line)
 }
 
 onMounted(() => {
