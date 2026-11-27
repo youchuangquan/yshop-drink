@@ -1,6 +1,8 @@
 /**
- * 顾客火锅页只用现有接口返回的字段。
- * 预约占的是时段容量。扫码不占桌。账单缺 version 时不能结账，也不能把账单标成已付。
+ * 顾客火锅页只用接口返回的字段。
+ * 扫码只读。空桌要等第一道菜提交成功，服务端才占桌。
+ * 点菜必须带已有的 slotId。结账只用账单上的 version，应付金额也只显示账单返回的 payableFen。
+ * paymentSuccess 不能当成已付。
  */
 
 const REQUEST_KEY = /^[A-Za-z0-9_-]{8,64}$/
@@ -199,6 +201,185 @@ export function menuRows(goods) {
   return rows
 }
 
+const CLOCK = /^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$/
+
+export function slotClock(value) {
+  return typeof value === 'string' && CLOCK.test(value) ? value : ''
+}
+
+export function holdStorageKey(shopId) {
+  return `hotpotHold:${shopId}`
+}
+
+export function holdRecord(hold, shopId) {
+  if (!hold || typeof hold !== 'object' || !shopReady(shopId)) {
+    return null
+  }
+  if (!idReady(hold.holdId) || !idReady(hold.slotId)) {
+    return null
+  }
+  if (hold.shopId != null && hold.shopId !== '' && String(hold.shopId) !== String(shopId)) {
+    return null
+  }
+  if (hold.status !== 'HELD' && hold.status !== 'SEATED') {
+    return null
+  }
+  return {
+    holdId: hold.holdId,
+    shopId: hold.shopId == null || hold.shopId === '' ? shopId : hold.shopId,
+    slotId: hold.slotId,
+    status: hold.status,
+  }
+}
+
+export function rememberHold(storage, shopId, hold) {
+  if (!storage || typeof storage.set !== 'function' || typeof storage.remove !== 'function' || !shopReady(shopId)) {
+    return null
+  }
+  const record = holdRecord(hold, shopId)
+  const key = holdStorageKey(shopId)
+  if (!record) {
+    storage.remove(key)
+    return null
+  }
+  storage.set(key, record)
+  return record
+}
+
+export function readHold(storage, shopId) {
+  if (!storage || typeof storage.get !== 'function' || !shopReady(shopId)) {
+    return null
+  }
+  const raw = storage.get(holdStorageKey(shopId))
+  if (raw == null || raw === '') {
+    return null
+  }
+  return holdRecord(raw, shopId)
+}
+
+export function reservedSlot(rows, shopId, record) {
+  const saved = holdRecord(record, shopId)
+  if (!saved) {
+    return null
+  }
+  const slots = visibleSlots(rows, shopId)
+  for (const slot of slots) {
+    if (String(slot.slotId) === String(saved.slotId)) {
+      return slot
+    }
+  }
+  return null
+}
+
+export function dishBody(input) {
+  if (!input || !shopReady(input.shopId) || !idReady(input.slotId) || !idReady(input.productId)) {
+    return null
+  }
+  if (typeof input.signCode !== 'string' || !input.signCode.trim()) {
+    return null
+  }
+  if (typeof input.quantity !== 'number' || !Number.isInteger(input.quantity) || input.quantity < 1) {
+    return null
+  }
+  if (typeof input.requestKey !== 'string' || !REQUEST_KEY.test(input.requestKey)) {
+    return null
+  }
+  const body = {
+    shopId: input.shopId,
+    slotId: input.slotId,
+    signCode: input.signCode.trim(),
+    productId: input.productId,
+    quantity: input.quantity,
+    requestKey: input.requestKey,
+  }
+  if (input.open === true) {
+    if (typeof input.version !== 'number' || !Number.isInteger(input.version) || input.version < 1) {
+      return null
+    }
+    body.version = input.version
+  }
+  return body
+}
+
+function dishMark(dish) {
+  if (!dish || !idReady(dish.productId) || !idReady(dish.slotId)) {
+    return ''
+  }
+  if (typeof dish.quantity !== 'number' || !Number.isInteger(dish.quantity) || dish.quantity < 1) {
+    return ''
+  }
+  if (typeof dish.signCode !== 'string' || !dish.signCode.trim()) {
+    return ''
+  }
+  const version = dish.version == null ? '' : String(dish.version)
+  return [String(dish.productId), String(dish.quantity), String(dish.slotId), dish.signCode.trim(), version].join('|')
+}
+
+export function sameDishAttempt(previous, dish) {
+  if (!previous || previous.done === true) {
+    return false
+  }
+  if (typeof previous.key !== 'string' || !REQUEST_KEY.test(previous.key)) {
+    return false
+  }
+  const left = dishMark(previous)
+  const right = dishMark(dish)
+  return left !== '' && left === right
+}
+
+export function openedSession(response) {
+  if (!response || !idReady(response.sessionId)) {
+    return null
+  }
+  if (typeof response.version !== 'number' || !Number.isInteger(response.version) || response.version < 1) {
+    return null
+  }
+  return {
+    sessionId: response.sessionId,
+    version: response.version,
+    slotId: idReady(response.slotId) ? response.slotId : null,
+    payableFen: integerFen(response.payableFen),
+    status: typeof response.status === 'string' ? response.status : '',
+  }
+}
+
+function integerFen(value) {
+  return typeof value === 'number' && Number.isInteger(value) ? value : null
+}
+
+function lineName(value) {
+  return value == null ? '' : String(value)
+}
+
+export function presentBill(bill) {
+  if (!bill || !idReady(bill.sessionId)) {
+    return null
+  }
+  const pots = Array.isArray(bill.pots)
+    ? bill.pots.filter((pot) => pot && (pot.name || pot.potId != null || pot.priceFen != null)).map((pot) => ({
+      potId: pot.potId,
+      name: lineName(pot.name),
+      priceFen: integerFen(pot.priceFen),
+    }))
+    : []
+  const dishes = Array.isArray(bill.dishes)
+    ? bill.dishes.filter((dish) => dish && (dish.name || dish.productId != null)).map((dish) => ({
+      productId: dish.productId,
+      name: lineName(dish.name),
+      priceFen: integerFen(dish.priceFen),
+      quantity: typeof dish.quantity === 'number' && Number.isInteger(dish.quantity) && dish.quantity >= 1 ? dish.quantity : null,
+    }))
+    : []
+  return {
+    sessionId: bill.sessionId,
+    version: typeof bill.version === 'number' && Number.isInteger(bill.version) && bill.version >= 0 ? bill.version : null,
+    payableFen: integerFen(bill.payableFen),
+    status: typeof bill.status === 'string' ? bill.status : '',
+    pots,
+    dishes,
+  }
+}
+
 export function checkoutBody(bill) {
   if (!bill || !idReady(bill.sessionId)) {
     return null
@@ -212,7 +393,35 @@ export function checkoutBody(bill) {
   }
 }
 
-export const BILL_CHECKOUT_GAP = '这份账单只返回了开台号。结账还需要 version，应付金额和明细也没有返回，所以不能发起结账，也不会把账单标成已付。'
+export function canSettle(bill) {
+  if (!bill || integerFen(bill.payableFen) == null) {
+    return false
+  }
+  return checkoutBody(bill) != null
+}
+
+export const BILL_CHECKOUT_GAP = '这份账单缺少整数 version 或应付金额。不能发起结账，也不会把账单标成已付。'
+
+export const CHANNEL_CLOSED = '收款渠道未接通'
+
+export function settleFailureText(error, payableFen) {
+  const body = error && (error.data || (error.response && error.response.data))
+  const msg = body && typeof body.msg === 'string' ? body.msg.trim() : ''
+  if (msg) {
+    return msg
+  }
+  if (typeof payableFen === 'number' && Number.isInteger(payableFen) && payableFen > 0) {
+    return CHANNEL_CLOSED
+  }
+  return '结账没有完成，账单未支付。'
+}
+
+export function sessionStatusText(status) {
+  if (status === 'OPEN') return '开台中'
+  if (status === 'RELEASED') return '已释放'
+  if (typeof status === 'string' && status) return status
+  return ''
+}
 
 export function formatFen(fen) {
   if (typeof fen !== 'number' || !Number.isInteger(fen)) {
@@ -230,7 +439,8 @@ export function presentSettlement(session) {
     return null
   }
   const disposition = typeof session.disposition === 'string' ? session.disposition : null
-  const paid = session.paid === true && session.paymentSuccess === true && disposition !== 'UNCONNECTED'
+  // paymentSuccess 单独为 true 时仍是未支付。应付为 0 的释放也不是支付成功。
+  const paid = session.paid === true && session.paymentSuccess === true && disposition !== 'UNCONNECTED' && session.zeroPayReleased !== true
   const pots = Array.isArray(session.pots)
     ? session.pots.filter((pot) => pot && (pot.name || pot.priceFen != null)).map((pot) => ({
       potId: pot.potId,

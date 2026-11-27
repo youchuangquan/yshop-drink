@@ -27,6 +27,10 @@
 				<view class="bg-white hotpot-page__block" v-for="slot in slots" :key="slot.slotId">
 					<view class="font-size-lg text-color-base">时段 {{ slot.slotId }}</view>
 					<view class="font-size-sm text-color-assist hotpot-page__gap">容量 {{ slot.capacity }}，已占 {{ slot.occupied }}</view>
+					<view class="font-size-sm text-color-assist hotpot-page__gap" v-if="slotClock(slot.startTime) || slotClock(slot.endTime)">
+						<text v-if="slotClock(slot.startTime)">开始 {{ slotClock(slot.startTime) }}</text>
+						<text v-if="slotClock(slot.endTime)"> 结束 {{ slotClock(slot.endTime) }}</text>
+					</view>
 					<view class="font-size-base text-color-base hotpot-page__gap" v-if="leftOf(slot) != null && leftOf(slot) >= 0">剩余 {{ leftOf(slot) }}</view>
 					<view class="font-size-sm text-color-assist hotpot-page__gap" v-else>剩余名额无法从返回的容量计算</view>
 					<button
@@ -72,6 +76,8 @@ import {
   sameRequest,
   cancelBody,
   holdStatusText,
+  slotClock,
+  rememberHold,
 } from '@/utils/hotpot'
 import { hotpotSlots, hotpotReserve, hotpotCancel } from '@/api/hotpot'
 
@@ -87,6 +93,27 @@ const hold = ref(null)
 let pending = null
 
 const leftOf = (slot) => remainingCapacity(slot)
+
+function pageStorage() {
+  return {
+    get(key) {
+      return uni.getStorageSync(key)
+    },
+    set(key, value) {
+      uni.setStorageSync(key, value)
+    },
+    remove(key) {
+      uni.removeStorageSync(key)
+    },
+  }
+}
+
+const keepHold = (data) => {
+  if (!shopReady(shopId.value)) {
+    return
+  }
+  rememberHold(pageStorage(), shopId.value, data)
+}
 
 const reserveLabel = (slot) => {
   const left = remainingCapacity(slot)
@@ -139,6 +166,7 @@ const submit = async (slot) => {
       return
     }
     hold.value = data
+    keepHold(data)
     pending = { ...pending, done: true }
     await loadSlots()
   } catch (error) {
@@ -161,6 +189,7 @@ const cancelHold = async () => {
     const data = await hotpotCancel(body)
     if (data && data.holdId) {
       hold.value = data
+      keepHold(data)
     }
     await loadSlots()
   } catch (error) {
