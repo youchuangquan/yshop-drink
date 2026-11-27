@@ -4,6 +4,7 @@ import co.yixiang.yshop.module.order.controller.app.order.param.AppComputeOrderP
 import co.yixiang.yshop.module.order.controller.app.order.param.AppOrderParam;
 import co.yixiang.yshop.module.order.controller.app.order.param.AppPayParam;
 import co.yixiang.yshop.module.order.controller.app.order.vo.AppConfirmOrderVo;
+import co.yixiang.yshop.module.order.controller.app.order.vo.AppMalatangQuoteVo;
 import co.yixiang.yshop.module.order.controller.app.order.vo.AppStoreOrderQueryVo;
 import co.yixiang.yshop.module.order.dal.dataobject.storeorder.StoreOrderDO;
 import com.baomidou.mybatisplus.extension.service.IService;
@@ -38,6 +39,11 @@ public interface AppStoreOrderService extends IService<StoreOrderDO> {
      */
     Map<String, Object> createOrder(Long uid, AppOrderParam param);
 
+    /**
+     * 按本店配置报价。不创建订单，不扣库存，不核销优惠券。
+     */
+    AppMalatangQuoteVo quote(Long uid, AppOrderParam param);
+
 
     /**
      * 第三方支付
@@ -61,6 +67,12 @@ public interface AppStoreOrderService extends IService<StoreOrderDO> {
      */
     void paySuccess(String orderId,String payType);
 
+    /**
+     * 支付通知补偿。同一通知键重放不会再次入账。
+     * notifyKey 为空时，只有余额和现金会使用本系统生成的稳定键；微信和支付宝没有接通，不会入账。
+     */
+    void paySuccess(String orderId, String payType, String notifyKey);
+
 
     /**
      * 订单列表
@@ -70,7 +82,7 @@ public interface AppStoreOrderService extends IService<StoreOrderDO> {
      * @param limit limit
      * @return list
      */
-    List<AppStoreOrderQueryVo> orderList(Long uid, int type, int page, int limit);
+    List<AppStoreOrderQueryVo> orderList(Long uid, Long shopId, int type, int page, int limit);
 
     /**
      * 处理订单返回的状态
@@ -84,7 +96,7 @@ public interface AppStoreOrderService extends IService<StoreOrderDO> {
      * @param orderId 单号
      * @param uid uid
      */
-    void takeOrder(String orderId,Long uid);
+    void takeOrder(String orderId,Long uid, Long shopId);
 
     /**
      * 申请退款
@@ -94,21 +106,21 @@ public interface AppStoreOrderService extends IService<StoreOrderDO> {
      * @param orderId 订单号
      * @param uid uid
      */
-    void orderApplyRefund(String explain,String Img,String text,String orderId, Long uid);
+    void orderApplyRefund(String explain,String Img,String text,String orderId, Long uid, Long shopId);
 
     /**
      * 删除订单
      * @param orderId 单号
      * @param uid uid
      */
-    void removeOrder(String orderId,Long uid);
+    void removeOrder(String orderId,Long uid, Long shopId);
 
     /**
      * 未付款取消订单
      * @param orderId 订单号
      * @param uid 用户id
      */
-    void cancelOrder(String orderId,Long uid);
+    void cancelOrder(String orderId,Long uid, Long shopId);
 
 
 

@@ -21,5 +21,8 @@ public class AppScoreProductQueryParam extends QueryParam {
     @Schema(description = "关键字", required = true)
     private String keyword;
 
+    @Schema(description = "门店ID")
+    private Long shopId;
+
 
 }

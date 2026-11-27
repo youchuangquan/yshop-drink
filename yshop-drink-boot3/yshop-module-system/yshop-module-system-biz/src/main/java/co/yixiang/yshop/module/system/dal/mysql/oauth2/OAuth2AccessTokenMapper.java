@@ -1,6 +1,9 @@
 package co.yixiang.yshop.module.system.dal.mysql.oauth2;
 
 import co.yixiang.yshop.framework.common.pojo.PageResult;
+import co.yixiang.yshop.framework.common.shop.ShopAccess;
+import co.yixiang.yshop.framework.security.core.LoginUser;
+import co.yixiang.yshop.framework.security.core.util.SecurityFrameworkUtils;
 import co.yixiang.yshop.framework.mybatis.core.mapper.BaseMapperX;
 import co.yixiang.yshop.framework.mybatis.core.query.LambdaQueryWrapperX;
 import co.yixiang.yshop.framework.tenant.core.aop.TenantIgnore;
@@ -24,12 +27,17 @@ public interface OAuth2AccessTokenMapper extends BaseMapperX<OAuth2AccessTokenDO
     }
 
     default PageResult<OAuth2AccessTokenDO> selectPage(OAuth2AccessTokenPageReqVO reqVO) {
-        return selectPage(reqVO, new LambdaQueryWrapperX<OAuth2AccessTokenDO>()
-                .eqIfPresent(OAuth2AccessTokenDO::getUserId, reqVO.getUserId())
+        LambdaQueryWrapperX<OAuth2AccessTokenDO> wrapper = new LambdaQueryWrapperX<>();
+        wrapper.eqIfPresent(OAuth2AccessTokenDO::getUserId, reqVO.getUserId())
                 .eqIfPresent(OAuth2AccessTokenDO::getUserType, reqVO.getUserType())
                 .likeIfPresent(OAuth2AccessTokenDO::getClientId, reqVO.getClientId())
-                .gt(OAuth2AccessTokenDO::getExpiresTime, LocalDateTime.now())
-                .orderByDesc(OAuth2AccessTokenDO::getId));
+                .gt(OAuth2AccessTokenDO::getExpiresTime, LocalDateTime.now());
+        wrapper.orderByDesc(OAuth2AccessTokenDO::getId);
+        LoginUser user = SecurityFrameworkUtils.getLoginUser();
+        if (user != null) {
+            wrapper.eq(OAuth2AccessTokenDO::getShopId, ShopAccess.staffShop(user.getShopId(), null));
+        }
+        return selectPage(reqVO, wrapper);
     }
 
 }

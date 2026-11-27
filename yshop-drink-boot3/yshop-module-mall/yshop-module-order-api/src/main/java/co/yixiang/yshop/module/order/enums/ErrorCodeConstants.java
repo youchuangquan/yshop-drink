@@ -36,6 +36,7 @@ public interface ErrorCodeConstants {
 
 
     ErrorCode STORE_ORDER_DESK_NOT = new ErrorCode(1008007023, "当前桌号不存在");
+    ErrorCode ORDER_PAY_CHANNEL_CLOSED = new ErrorCode(1008007024, "支付渠道未接通");
 
 
 

@@ -140,7 +140,7 @@ const typeInfo = (type) => {
 	}
 }
 const getCoupons = async() => {
-	let data = await couponMine({shop_id: shop_id.value, type: type.value, page:1, pagesize:10000});
+	let data = await couponMine({shopId: shop_id.value, type: type.value, page:1, pagesize:10000});
 	uni.stopPullDownRefresh();
 	if (data) {
 		coupons.value = data;

@@ -8,7 +8,7 @@ import co.yixiang.yshop.framework.common.enums.ShopCommonEnum;
 import co.yixiang.yshop.framework.common.pojo.PageResult;
 import co.yixiang.yshop.framework.mybatis.core.query.LambdaQueryWrapperX;
 import co.yixiang.yshop.framework.mybatis.core.mapper.BaseMapperX;
-import co.yixiang.yshop.framework.security.core.util.SecurityFrameworkUtils;
+import co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils;
 import co.yixiang.yshop.module.order.dal.dataobject.storeorder.StoreOrderDO;
 import co.yixiang.yshop.module.order.enums.AdminOrderStatusEnum;
 import co.yixiang.yshop.module.order.enums.OrderLogEnum;
@@ -30,13 +30,10 @@ public interface StoreOrderMapper extends BaseMapperX<StoreOrderDO> {
 
     default PageResult<StoreOrderDO> selectPage(StoreOrderPageReqVO reqVO) {
         LambdaQueryWrapperX<StoreOrderDO> wrapper = new LambdaQueryWrapperX();
-        Long shopId = SecurityFrameworkUtils.getLoginUser().getShopId();
-        if(shopId > 0) {
-            wrapper.eq(StoreOrderDO::getShopId,shopId);
-        }
+        long shopId = ShopSecurityUtils.currentStaffShop(reqVO.getShopId());
+        wrapper.eq(StoreOrderDO::getShopId, shopId);
         wrapper.eqIfPresent(StoreOrderDO::getOrderId, reqVO.getOrderId())
                 .eqIfPresent(StoreOrderDO::getNumberId, reqVO.getNumberId())
-                .eqIfPresent(StoreOrderDO::getShopId, reqVO.getShopId())
                 .likeIfPresent(StoreOrderDO::getRealName, reqVO.getRealName())
                 .eqIfPresent(StoreOrderDO::getUserPhone, reqVO.getUserPhone())
                 .eqIfPresent(StoreOrderDO::getOrderType,reqVO.getOrderType())
@@ -111,7 +108,9 @@ public interface StoreOrderMapper extends BaseMapperX<StoreOrderDO> {
     }
 
     default List<StoreOrderDO> selectList(StoreOrderExportReqVO reqVO) {
+        long shopId = ShopSecurityUtils.currentStaffShop(null);
         return selectList(new LambdaQueryWrapperX<StoreOrderDO>()
+                .eq(StoreOrderDO::getShopId, shopId)
                 .eqIfPresent(StoreOrderDO::getOrderId, reqVO.getOrderId())
                 .likeIfPresent(StoreOrderDO::getRealName, reqVO.getRealName())
                 .eqIfPresent(StoreOrderDO::getUserPhone, reqVO.getUserPhone())

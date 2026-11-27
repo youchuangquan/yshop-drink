@@ -72,7 +72,9 @@ public class AppStoreController {
     @Operation(summary = "获取最近的店铺")
     public CommonResult<AppStoreShopVO> getShop(@RequestParam("shop_id") Integer shopId) {
         StoreShopDO storeShopDO = appStoreShopService.getById(shopId);
-        return success(StoreShopConvert.INSTANCE.convert02(storeShopDO));
+        AppStoreShopVO shop = StoreShopConvert.INSTANCE.convert02(storeShopDO);
+        appStoreShopService.attachOptions(shop);
+        return success(shop);
     }
 
 

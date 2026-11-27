@@ -8,7 +8,8 @@ import co.yixiang.yshop.framework.common.enums.ShopCommonEnum;
 import co.yixiang.yshop.framework.common.pojo.PageResult;
 import co.yixiang.yshop.framework.mybatis.core.query.LambdaQueryWrapperX;
 import co.yixiang.yshop.framework.mybatis.core.mapper.BaseMapperX;
-import co.yixiang.yshop.framework.security.core.util.SecurityFrameworkUtils;
+import co.yixiang.yshop.framework.common.shop.ShopAccess;
+import co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils;
 import co.yixiang.yshop.module.product.dal.dataobject.storeproduct.StoreProductDO;
 import co.yixiang.yshop.module.product.enums.product.DefaultEnum;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -27,11 +28,8 @@ public interface StoreProductMapper extends BaseMapperX<StoreProductDO> {
 
     default PageResult<StoreProductDO> selectPage(StoreProductPageReqVO reqVO) {
         LambdaQueryWrapperX<StoreProductDO> wrapper = new LambdaQueryWrapperX<>();
-
-        Long shopId = SecurityFrameworkUtils.getLoginUser().getShopId();
-        if(shopId > 0) {
-            wrapper.eq(StoreProductDO::getShopId,shopId);
-        }
+        long shopId = ShopSecurityUtils.currentStaffShop(null);
+        wrapper.eq(StoreProductDO::getShopId, ShopAccess.toIntShop(shopId));
 
         wrapper.likeIfPresent(StoreProductDO::getStoreName, reqVO.getStoreName())
                 .likeIfPresent(StoreProductDO::getShopName, reqVO.getShopName())
@@ -53,7 +51,9 @@ public interface StoreProductMapper extends BaseMapperX<StoreProductDO> {
     }
 
     default List<StoreProductDO> selectList(StoreProductExportReqVO reqVO) {
+        long shopId = ShopSecurityUtils.currentStaffShop(null);
         return selectList(new LambdaQueryWrapperX<StoreProductDO>()
+                .eq(StoreProductDO::getShopId, ShopAccess.toIntShop(shopId))
                 .likeIfPresent(StoreProductDO::getStoreName, reqVO.getStoreName())
                 .eqIfPresent(StoreProductDO::getIsPostage, reqVO.getIsPostage())
                 .orderByDesc(StoreProductDO::getId));
@@ -70,8 +70,8 @@ public interface StoreProductMapper extends BaseMapperX<StoreProductDO> {
      * @return
      */
     @Update("update yshop_store_product set stock=stock+#{num}, sales=sales-#{num}" +
-            " where id=#{productId}")
-    int incStockDecSales(@Param("num") Integer num,@Param("productId") Long productId);
+            " where id=#{productId} and shop_id=#{shopId}")
+    int incStockDecSales(@Param("num") Integer num, @Param("productId") Long productId, @Param("shopId") Integer shopId);
 
     /**
      * 正常商品库存 减库存 加销量
@@ -80,7 +80,7 @@ public interface StoreProductMapper extends BaseMapperX<StoreProductDO> {
      * @return
      */
     @Update("update yshop_store_product set stock=stock-#{num}, sales=sales+#{num}" +
-            " where id=#{productId} and stock >= #{num}")
-    int decStockIncSales(@Param("num") Integer num,@Param("productId") Long productId);
+            " where id=#{productId} and shop_id=#{shopId} and stock >= #{num}")
+    int decStockIncSales(@Param("num") Integer num, @Param("productId") Long productId, @Param("shopId") Integer shopId);
 
 }

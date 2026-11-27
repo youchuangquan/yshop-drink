@@ -59,8 +59,10 @@ public class AppAdController {
 //        List<ShopAdsDO> appShopAdsVOS = appShopAdsService.list(new LambdaQueryWrapper<ShopAdsDO>()
 //                .eq(ShopAdsDO::getId,0).or().apply(shopId > 0,
 //                        "FIND_IN_SET ('" + shopId + "',shop_id)"));
+        String scopedShopId = co.yixiang.yshop.framework.common.shop.ShopAccess.shopKey(
+                co.yixiang.yshop.framework.common.shop.ShopAccess.requirePositiveShopId(shopId));
         List<ShopAdsDO> appShopAdsVOS = appShopAdsService.list(new LambdaQueryWrapper<ShopAdsDO>()
-                .eq(ShopAdsDO::getShopId,0).or().eq(ShopAdsDO::getShopId,shopId));
+                .eq(ShopAdsDO::getShopId, scopedShopId));
         Map<String,Object> map = new HashMap<>();
         map.put("list",ShopAdsConvert.INSTANCE.convertList03(appShopAdsVOS));
         map.put("isActive",isActive);

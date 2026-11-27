@@ -29,8 +29,9 @@ public class CouponUserServiceImpl implements CouponUserService {
 
     @Override
     public Integer createUser(CouponUserCreateReqVO createReqVO) {
-        // 插入
         CouponUserDO user = CouponUserConvert.INSTANCE.convert(createReqVO);
+        user.setShopId(co.yixiang.yshop.framework.common.shop.ShopAccess.shopKey(
+                co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(createReqVO.getShopId())));
         userMapper.insert(user);
         // 返回
         return user.getId();
@@ -38,17 +39,26 @@ public class CouponUserServiceImpl implements CouponUserService {
 
     @Override
     public void updateUser(CouponUserUpdateReqVO updateReqVO) {
-        // 校验存在
-        validateUserExists(updateReqVO.getId());
-        // 更新
+        CouponUserDO exists = userMapper.selectById(updateReqVO.getId());
+        if (exists == null) {
+            throw exception(COUPON_USER_NOT_EXISTS);
+        }
+        String shopId = co.yixiang.yshop.framework.common.shop.ShopAccess.shopKey(
+                co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(updateReqVO.getShopId()));
+        co.yixiang.yshop.framework.common.shop.ShopAccess.assertCouponBelongs(exists.getShopId(), Long.parseLong(shopId));
         CouponUserDO updateObj = CouponUserConvert.INSTANCE.convert(updateReqVO);
+        updateObj.setShopId(shopId);
         userMapper.updateById(updateObj);
     }
 
     @Override
     public void deleteUser(Integer id) {
-        // 校验存在
-        validateUserExists(id);
+        CouponUserDO exists = userMapper.selectById(id);
+        if (exists == null) {
+            throw exception(COUPON_USER_NOT_EXISTS);
+        }
+        co.yixiang.yshop.framework.common.shop.ShopAccess.assertCouponBelongs(exists.getShopId(),
+                co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(null));
         // 删除
         userMapper.deleteById(id);
     }
@@ -61,7 +71,12 @@ public class CouponUserServiceImpl implements CouponUserService {
 
     @Override
     public CouponUserDO getUser(Integer id) {
-        return userMapper.selectById(id);
+        CouponUserDO couponUser = userMapper.selectById(id);
+        if (couponUser != null) {
+            co.yixiang.yshop.framework.common.shop.ShopAccess.assertCouponBelongs(couponUser.getShopId(),
+                    co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(null));
+        }
+        return couponUser;
     }
 
     @Override

@@ -75,8 +75,9 @@ public class StoreProductServiceImpl extends ServiceImpl<StoreProductMapper,Stor
 
     @Override
     public Long createStoreProduct(StoreProductCreateReqVO createReqVO) {
-        // 插入
         StoreProductDO storeProduct = StoreProductConvert.INSTANCE.convert(createReqVO);
+        storeProduct.setShopId(co.yixiang.yshop.framework.common.shop.ShopAccess.toIntShop(
+                co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(createReqVO.getShopId())));
         storeProductMapper.insert(storeProduct);
         // 返回
         return storeProduct.getId();
@@ -84,35 +85,51 @@ public class StoreProductServiceImpl extends ServiceImpl<StoreProductMapper,Stor
 
     @Override
     public void updateStoreProduct(StoreProductUpdateReqVO updateReqVO) {
-        // 校验存在
-        validateStoreProductExists(updateReqVO.getId());
-        // 更新
+        StoreProductDO exists = requireStaffProduct(updateReqVO.getId());
         StoreProductDO updateObj = StoreProductConvert.INSTANCE.convert(updateReqVO);
+        updateObj.setShopId(exists.getShopId());
         storeProductMapper.updateById(updateObj);
     }
 
     @Override
     public void deleteStoreProduct(Long id) {
-        // 校验存在
-        validateStoreProductExists(id);
-        // 删除
+        requireStaffProduct(id);
         storeProductMapper.deleteById(id);
     }
 
-    private void validateStoreProductExists(Long id) {
-        if (storeProductMapper.selectById(id) == null) {
+    private StoreProductDO requireStaffProduct(Long id) {
+        StoreProductDO product = storeProductMapper.selectById(id);
+        if (product == null) {
             throw exception(STORE_PRODUCT_NOT_EXISTS);
         }
+        co.yixiang.yshop.framework.common.shop.ShopAccess.assertSameShop(
+                product.getShopId() == null ? null : product.getShopId().longValue(),
+                co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(null));
+        return product;
     }
 
     @Override
     public StoreProductDO getStoreProduct(Long id) {
-        return storeProductMapper.selectById(id);
+        return requireStaffProduct(id);
     }
 
     @Override
     public List<StoreProductDO> getStoreProductList(Collection<Long> ids) {
-        return storeProductMapper.selectBatchIds(ids);
+        if (ids == null || ids.isEmpty()) {
+            return java.util.Collections.emptyList();
+        }
+        int shopId = co.yixiang.yshop.framework.common.shop.ShopAccess.toIntShop(
+                co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(null));
+        List<StoreProductDO> rows = storeProductMapper.selectList(com.baomidou.mybatisplus.core.toolkit.Wrappers.<StoreProductDO>lambdaQuery()
+                .in(StoreProductDO::getId, ids)
+                .eq(StoreProductDO::getShopId, shopId));
+        Long other = storeProductMapper.selectCount(com.baomidou.mybatisplus.core.toolkit.Wrappers.<StoreProductDO>lambdaQuery()
+                .in(StoreProductDO::getId, ids)
+                .ne(StoreProductDO::getShopId, shopId));
+        if (other != null && other > 0) {
+            throw exception(co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.FORBIDDEN);
+        }
+        return rows;
     }
 
     @Override

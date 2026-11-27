@@ -17,8 +17,11 @@ public class PayNoticeProducer {
      * 发送消息
      * @param orderId 订单编号
      */
-    public void sendPayNoticeMessage(String orderId,String payType) {
-        PayNoticeMessage payNoticeMessage = new PayNoticeMessage().setOrderId(orderId).setPayType(payType);
+    public void sendPayNoticeMessage(String orderId, String payType, String notifyKey) {
+        PayNoticeMessage payNoticeMessage = new PayNoticeMessage()
+                .setOrderId(orderId)
+                .setPayType(payType)
+                .setNotifyKey(notifyKey);
         redisMQTemplate.send(payNoticeMessage);
     }
 }

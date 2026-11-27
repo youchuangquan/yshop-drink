@@ -10,6 +10,7 @@ import java.time.LocalDateTime;
 import java.time.LocalDateTime;
 import java.time.LocalDateTime;
 import com.baomidou.mybatisplus.annotation.*;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import co.yixiang.yshop.framework.mybatis.core.dataobject.BaseDO;
 
 /**
@@ -77,6 +78,11 @@ public class StoreShopDO extends BaseDO {
      * 配送价格
      */
     private BigDecimal deliveryPrice;
+    /**
+     * 打包费。空表示没配置，不能当成 0。
+     */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private BigDecimal packingPrice;
     /**
      * 公告
      */

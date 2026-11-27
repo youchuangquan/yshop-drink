@@ -47,6 +47,10 @@ public class StoreOrderDO extends BaseDO {
      */
     private String orderId;
     /**
+     * 客户端稳定请求键。空值是旧客户端，不是防重。
+     */
+    private String requestKey;
+    /**
      * 额外订单号
      */
     private String extendOrderId;
@@ -94,6 +98,26 @@ public class StoreOrderDO extends BaseDO {
      * 支付邮费
      */
     private BigDecimal payPostage;
+    /**
+     * 打包费。空表示这单没有配置打包费。
+     */
+    private BigDecimal packingPrice;
+    /**
+     * 口味选项
+     */
+    private Long flavorOptionId;
+    /**
+     * 口味名称
+     */
+    private String flavorName;
+    /**
+     * 口味价格，来自门店配置
+     */
+    private BigDecimal flavorPrice;
+    /**
+     * 加料合计，来自门店配置
+     */
+    private BigDecimal addonPrice;
     /**
      * 抵扣金额
      */

@@ -5,7 +5,8 @@ import java.util.*;
 import co.yixiang.yshop.framework.common.pojo.PageResult;
 import co.yixiang.yshop.framework.mybatis.core.query.LambdaQueryWrapperX;
 import co.yixiang.yshop.framework.mybatis.core.mapper.BaseMapperX;
-import co.yixiang.yshop.framework.security.core.util.SecurityFrameworkUtils;
+import co.yixiang.yshop.framework.common.shop.ShopAccess;
+import co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils;
 import co.yixiang.yshop.module.coupon.dal.dataobject.coupon.CouponDO;
 import org.apache.ibatis.annotations.Mapper;
 import co.yixiang.yshop.module.coupon.controller.admin.coupon.vo.*;
@@ -19,22 +20,18 @@ import co.yixiang.yshop.module.coupon.controller.admin.coupon.vo.*;
 public interface CouponMapper extends BaseMapperX<CouponDO> {
 
     default PageResult<CouponDO> selectPage(CouponPageReqVO reqVO) {
-        Long shopId = SecurityFrameworkUtils.getLoginUser().getShopId();
-        if(shopId == 0) {
-            reqVO.setShopId(null);
-        }else {
-            reqVO.setShopId(shopId.toString());
-        }
+        String shopId = ShopAccess.shopKey(ShopSecurityUtils.currentStaffShop(reqVO.getShopId()));
         return selectPage(reqVO, new LambdaQueryWrapperX<CouponDO>()
-                .eqIfPresent(CouponDO::getShopId, reqVO.getShopId())
+                .eq(CouponDO::getShopId, shopId)
                 .likeIfPresent(CouponDO::getShopName, reqVO.getShopName())
                 .eqIfPresent(CouponDO::getTitle, reqVO.getTitle())
                 .orderByDesc(CouponDO::getId));
     }
 
     default List<CouponDO> selectList(CouponExportReqVO reqVO) {
+        String shopId = ShopAccess.shopKey(ShopSecurityUtils.currentStaffShop(reqVO.getShopId()));
         return selectList(new LambdaQueryWrapperX<CouponDO>()
-                .eqIfPresent(CouponDO::getShopId, reqVO.getShopId())
+                .eq(CouponDO::getShopId, shopId)
                 .likeIfPresent(CouponDO::getShopName, reqVO.getShopName())
                 .eqIfPresent(CouponDO::getTitle, reqVO.getTitle())
                 .eqIfPresent(CouponDO::getIsSwitch, reqVO.getIsSwitch())

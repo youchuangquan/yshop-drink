@@ -29,6 +29,10 @@ public class ScoreProductDO extends BaseDO {
     @TableId
     private Long id;
     /**
+     * 门店 id
+     */
+    private Long shopId;
+    /**
      * 产品标题
      */
     private String title;

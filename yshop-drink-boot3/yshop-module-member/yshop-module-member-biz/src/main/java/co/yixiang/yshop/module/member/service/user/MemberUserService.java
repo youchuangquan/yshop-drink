@@ -70,6 +70,8 @@ public interface MemberUserService extends IService<MemberUserDO> {
      */
     AppUserQueryVo getAppUser(Long id);
 
+    AppUserQueryVo getAppUser(Long id, Long shopId);
+
 
     /**
      * 减去用户余额

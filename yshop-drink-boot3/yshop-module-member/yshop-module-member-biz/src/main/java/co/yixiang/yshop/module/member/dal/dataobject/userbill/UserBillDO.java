@@ -34,6 +34,10 @@ public class UserBillDO extends BaseDO {
      */
     private Long uid;
     /**
+     * 门店 id。积分流水必须带本店，避免两店串账。
+     */
+    private Long shopId;
+    /**
      * 关联id
      */
     private String linkId;

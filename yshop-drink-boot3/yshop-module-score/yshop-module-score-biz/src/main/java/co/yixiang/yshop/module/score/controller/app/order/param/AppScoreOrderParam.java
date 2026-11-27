@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 /**
  * <p>
@@ -30,6 +31,11 @@ public class AppScoreOrderParam {
     @Schema(description = "数量", required = true)
     private String num;
 
+    @Schema(description = "门店ID", required = true)
+    private String shopId;
 
+    @Size(max = 64, message = "长度超过了限制")
+    @Schema(description = "稳定请求键。同一个键重复提交不新建订单。不传仍可下单，但不是防重；空字符串会拒绝")
+    private String requestKey;
 
 }

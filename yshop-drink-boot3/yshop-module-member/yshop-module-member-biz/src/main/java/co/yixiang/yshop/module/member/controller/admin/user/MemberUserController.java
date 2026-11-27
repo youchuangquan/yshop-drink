@@ -6,6 +6,7 @@ import co.yixiang.yshop.module.member.controller.admin.user.vo.*;
 import co.yixiang.yshop.module.member.convert.user.UserConvert;
 import co.yixiang.yshop.module.member.dal.dataobject.user.MemberUserDO;
 import co.yixiang.yshop.module.member.service.user.UserService;
+import co.yixiang.yshop.module.member.service.usershopintegral.ShopUserIntegralService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -28,6 +29,8 @@ public class MemberUserController {
 
     @Resource
     private UserService userService;
+    @Resource
+    private ShopUserIntegralService shopUserIntegralService;
 
     @PostMapping("/create")
     @Operation(summary = "创建用户")
@@ -67,6 +70,16 @@ public class MemberUserController {
     @PreAuthorize("@ss.hasPermission('member:user:query')")
     public CommonResult<UserRespVO> getUser(@RequestParam("id") Long id) {
         MemberUserDO user = userService.getUser(id);
+        if (user != null) {
+            Long loginShopId = co.yixiang.yshop.framework.security.core.util.SecurityFrameworkUtils.getLoginUser() == null
+                    ? null
+                    : co.yixiang.yshop.framework.security.core.util.SecurityFrameworkUtils.getLoginUser().getShopId();
+            if (loginShopId != null && loginShopId > 0) {
+                user.setIntegral(shopUserIntegralService.balance(id, loginShopId));
+            } else {
+                user.setIntegral(java.math.BigDecimal.ZERO);
+            }
+        }
         return success(UserConvert.INSTANCE.convert(user,true));
     }
 

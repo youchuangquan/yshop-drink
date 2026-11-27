@@ -22,4 +22,6 @@ public interface AppStoreShopService extends IService<StoreShopDO> {
      */
     List<AppStoreShopVO> getStoreList(double lon,double lat,String name,Integer shopId);
 
+    void attachOptions(AppStoreShopVO shop);
+
 }

@@ -36,6 +36,8 @@ public interface UserBillService extends IService<UserBillDO> {
      */
     void expend(Long uid,String title,String category,String type,double number,double balance,String mark);
 
+    void expend(Long uid,String title,String category,String type,double number,double balance,String mark, Long shopId);
+
     /**
      * 增加收入/支入流水
      * @param uid uid
@@ -51,6 +53,9 @@ public interface UserBillService extends IService<UserBillDO> {
                 double balance,String mark,String linkid);
 
     void income(Long uid,String title,String category,String type,double number,
+                double balance,String mark,String linkid, Long shopId);
+
+    void income(Long uid,String title,String category,String type,double number,
                 double balance,String mark,String linkid,String extendField);
 
     /**
@@ -63,6 +68,8 @@ public interface UserBillService extends IService<UserBillDO> {
      * @return
      */
     List<AppUserBillVO> getBillList(Long uid, int cate, int type,int page, int limit);
+
+    List<AppUserBillVO> getBillList(Long uid, int cate, int type,int page, int limit, Long shopId);
 
 
 }

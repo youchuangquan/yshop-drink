@@ -88,9 +88,8 @@ public class AppUserController {
     @GetMapping("/get-info")
     @Operation(summary = "获得基本信息")
     @PreAuthenticated
-    public CommonResult<AppUserQueryVo> getUserBaseInfo() {
-
-        return success(userService.getAppUser(getLoginUserId()));
+    public CommonResult<AppUserQueryVo> getUserBaseInfo(@RequestParam(value = "shopId", required = false) Long shopId) {
+        return success(userService.getAppUser(getLoginUserId(), shopId));
     }
 
     @GetMapping("/getBill")
@@ -109,8 +108,9 @@ public class AppUserController {
     public CommonResult<List<AppUserBillVO>> getUserBill(@RequestParam(value = "cate", defaultValue = "0") int cate,
                                                          @RequestParam(value = "type", defaultValue = "0") int type,
                                                          @RequestParam(value = "page", defaultValue = "1") int page,
-                                                         @RequestParam(value = "pagesize", defaultValue = "10") int pagesize) {
-        return success(userBillService.getBillList(getLoginUserId(),cate,type,page,pagesize));
+                                                         @RequestParam(value = "pagesize", defaultValue = "10") int pagesize,
+                                                         @RequestParam(value = "shopId", required = false) Long shopId) {
+        return success(userBillService.getBillList(getLoginUserId(),cate,type,page,pagesize, shopId));
     }
 
 

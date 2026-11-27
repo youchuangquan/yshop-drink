@@ -29,21 +29,21 @@ public interface AppScoreOrderService extends IService<ScoreOrderDO> {
      * @param limit limit
      * @return list
      */
-    List<AppScoreOrderVO> orderList(Long uid, int type, int page, int limit);
+    List<AppScoreOrderVO> orderList(Long uid, Long shopId, int type, int page, int limit);
 
     /**
      * 订单详情
      * @param uid 用户id
      * @param id
      */
-    AppScoreOrderVO orderDetail(Long uid, Long id);
+    AppScoreOrderVO orderDetail(Long uid, Long id, Long shopId);
 
     /**
      * 收货
      * @param uid
      * @param id
      */
-    void take(Long uid, Long id);
+    void take(Long uid, Long id, Long shopId);
 
 
 }

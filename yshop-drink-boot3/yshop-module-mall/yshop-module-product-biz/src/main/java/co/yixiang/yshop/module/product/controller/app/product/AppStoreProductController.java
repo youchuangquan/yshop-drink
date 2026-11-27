@@ -60,8 +60,9 @@ public class AppStoreProductController {
      */
     @GetMapping("/detail/{id}")
     @Operation(summary = "获取产品详情")
-    public CommonResult<AppStoreProductRespVo> goodsDetail(@PathVariable Long id){
-        return success(storeProductService.getStoreProductById(id));
+    public CommonResult<AppStoreProductRespVo> goodsDetail(@PathVariable Long id,
+                                                           @org.springframework.web.bind.annotation.RequestParam("shopId") Long shopId){
+        return success(storeProductService.getStoreProductById(id, shopId));
     }
 
 

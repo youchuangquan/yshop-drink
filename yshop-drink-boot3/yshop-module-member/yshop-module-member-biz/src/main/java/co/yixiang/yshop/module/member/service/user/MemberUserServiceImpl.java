@@ -5,6 +5,7 @@ import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.StrUtil;
 import co.yixiang.yshop.framework.common.enums.CommonStatusEnum;
 import co.yixiang.yshop.framework.common.enums.ShopCommonEnum;
+import co.yixiang.yshop.framework.common.shop.ShopAccess;
 import co.yixiang.yshop.module.coupon.dal.dataobject.couponuser.CouponUserDO;
 import co.yixiang.yshop.module.coupon.service.couponuser.AppCouponUserService;
 import co.yixiang.yshop.module.infra.api.file.FileApi;
@@ -17,6 +18,7 @@ import co.yixiang.yshop.module.member.dal.mysql.user.MemberUserMapper;
 import co.yixiang.yshop.module.member.dal.mysql.userbill.UserBillMapper;
 import co.yixiang.yshop.module.member.enums.BillDetailEnum;
 import co.yixiang.yshop.module.member.service.userbill.UserBillService;
+import co.yixiang.yshop.module.member.service.usershopintegral.ShopUserIntegralService;
 import co.yixiang.yshop.module.system.api.sms.SmsCodeApi;
 import co.yixiang.yshop.module.system.api.sms.dto.code.SmsCodeUseReqDTO;
 import co.yixiang.yshop.module.system.enums.sms.SmsSceneEnum;
@@ -68,6 +70,8 @@ public class MemberUserServiceImpl extends ServiceImpl<MemberUserMapper,MemberUs
     private UserBillMapper userBillMapper;
     @Resource
     private UserBillService billService;
+    @Resource
+    private ShopUserIntegralService shopUserIntegralService;
 
 
 
@@ -125,11 +129,24 @@ public class MemberUserServiceImpl extends ServiceImpl<MemberUserMapper,MemberUs
 
     @Override
     public AppUserQueryVo getAppUser(Long id){
+        return getAppUser(id, null);
+    }
+
+    @Override
+    public AppUserQueryVo getAppUser(Long id, Long shopId){
         AppUserQueryVo appUserQueryVo = UserConvert.INSTANCE.convert3(memberUserMapper.selectById(id));
-        Long count = appCouponUserService.count(new LambdaQueryWrapper<CouponUserDO>()
-                .eq(CouponUserDO::getUserId,id)
-                .eq(CouponUserDO::getStatus, ShopCommonEnum.IS_STATUS_1));
-        appUserQueryVo.setCouponCount(count);
+        if (shopId == null || shopId <= 0) {
+            appUserQueryVo.setCouponCount(0L);
+            appUserQueryVo.setIntegral(BigDecimal.ZERO);
+        } else {
+            long shop = ShopAccess.requirePositiveShopId(shopId);
+            Long count = appCouponUserService.count(new LambdaQueryWrapper<CouponUserDO>()
+                    .eq(CouponUserDO::getUserId,id)
+                    .eq(CouponUserDO::getShopId, ShopAccess.shopKey(shop))
+                    .eq(CouponUserDO::getStatus, ShopCommonEnum.IS_STATUS_1));
+            appUserQueryVo.setCouponCount(count);
+            appUserQueryVo.setIntegral(shopUserIntegralService.balance(id, shop));
+        }
         QueryWrapper<UserBillDO> wrapper = new QueryWrapper<>();
         wrapper.select("SUM(number) as sumAll")
                 .eq("category", BillDetailEnum.CATEGORY_1.getValue())

@@ -1,6 +1,7 @@
 package co.yixiang.yshop.module.coupon.service.couponuser;
 
 import co.yixiang.yshop.framework.common.enums.ShopCommonEnum;
+import co.yixiang.yshop.framework.common.shop.ShopAccess;
 import co.yixiang.yshop.framework.mybatis.core.query.LambdaQueryWrapperX;
 import co.yixiang.yshop.module.coupon.controller.app.coupon.vo.AppMyCouponVO;
 import co.yixiang.yshop.module.coupon.convert.couponuser.CouponUserConvert;
@@ -60,7 +61,7 @@ public class AppCouponUserServiceImpl extends ServiceImpl<CouponUserMapper, Coup
             default:
                 log.warn("为了遵循阿里巴巴规范");
         }
-        wrapper.eqIfPresent(CouponUserDO::getShopId, shopId)
+        wrapper.eq(CouponUserDO::getShopId, ShopAccess.shopKey(ShopAccess.requirePositiveShopId(shopId)))
                 .eq(CouponUserDO::getUserId,uid);
         IPage<CouponUserDO> pageList = this.baseMapper.selectPage(pageModel, wrapper);
         return CouponUserConvert.INSTANCE.convertList03(pageList.getRecords());

@@ -46,6 +46,12 @@ public class AppOrderParam implements Serializable {
     @Schema(description = "数量", required = true)
     private List<String>  number;
 
+    @Schema(description = "口味选项 id。不传表示不选。价格由服务端读取，请求里的价格无效")
+    private Long flavorOptionId;
+
+    @Schema(description = "加料。只认选项 id 和数量")
+    private List<AppAddonPickParam> addons;
+
     @Schema(description = "支付类型", required = true)
     private String payType;
 
@@ -60,5 +66,9 @@ public class AppOrderParam implements Serializable {
 
     @Schema(description = "订单号", required = true)
     private String orderId;
+
+    @Size(max = 64, message = "长度超过了限制")
+    @Schema(description = "稳定请求键。同一个键重复提交返回已有订单。不传仍可下单，但不是防重；空字符串会拒绝")
+    private String requestKey;
 
 }

@@ -31,6 +31,7 @@ public class ScoreProductServiceImpl implements ScoreProductService {
     public Long createProduct(ScoreProductCreateReqVO createReqVO) {
         // 插入
         ScoreProductDO product = ScoreProductConvert.INSTANCE.convert(createReqVO);
+        product.setShopId(co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(null));
         productMapper.insert(product);
         // 返回
         return product.getId();
@@ -39,29 +40,38 @@ public class ScoreProductServiceImpl implements ScoreProductService {
     @Override
     public void updateProduct(ScoreProductUpdateReqVO updateReqVO) {
         // 校验存在
-        validateProductExists(updateReqVO.getId());
-        // 更新
+        ScoreProductDO exists = productMapper.selectById(updateReqVO.getId());
+        if (exists == null) {
+            throw exception(PRODUCT_NOT_EXISTS);
+        }
+        long shopId = co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(null);
+        co.yixiang.yshop.framework.common.shop.ShopAccess.assertSameShop(exists.getShopId(), shopId);
         ScoreProductDO updateObj = ScoreProductConvert.INSTANCE.convert(updateReqVO);
+        updateObj.setShopId(shopId);
         productMapper.updateById(updateObj);
     }
 
     @Override
     public void deleteProduct(Long id) {
         // 校验存在
-        validateProductExists(id);
+        requireStaffProduct(id);
         // 删除
         productMapper.deleteById(id);
     }
 
-    private void validateProductExists(Long id) {
-        if (productMapper.selectById(id) == null) {
+    private ScoreProductDO requireStaffProduct(Long id) {
+        ScoreProductDO product = productMapper.selectById(id);
+        if (product == null) {
             throw exception(PRODUCT_NOT_EXISTS);
         }
+        co.yixiang.yshop.framework.common.shop.ShopAccess.assertSameShop(product.getShopId(),
+                co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(null));
+        return product;
     }
 
     @Override
     public ScoreProductDO getProduct(Long id) {
-        return productMapper.selectById(id);
+        return requireStaffProduct(id);
     }
 
     @Override

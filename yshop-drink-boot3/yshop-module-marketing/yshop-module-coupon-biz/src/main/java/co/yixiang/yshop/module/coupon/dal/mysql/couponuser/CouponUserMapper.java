@@ -3,6 +3,8 @@ package co.yixiang.yshop.module.coupon.dal.mysql.couponuser;
 import java.util.*;
 
 import co.yixiang.yshop.framework.common.pojo.PageResult;
+import co.yixiang.yshop.framework.common.shop.ShopAccess;
+import co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils;
 import co.yixiang.yshop.framework.mybatis.core.query.LambdaQueryWrapperX;
 import co.yixiang.yshop.framework.mybatis.core.mapper.BaseMapperX;
 import co.yixiang.yshop.module.coupon.dal.dataobject.couponuser.CouponUserDO;
@@ -18,8 +20,9 @@ import co.yixiang.yshop.module.coupon.controller.admin.couponuser.vo.*;
 public interface CouponUserMapper extends BaseMapperX<CouponUserDO> {
 
     default PageResult<CouponUserDO> selectPage(CouponUserPageReqVO reqVO) {
+        String shopId = ShopAccess.shopKey(ShopSecurityUtils.currentStaffShop(reqVO.getShopId()));
         return selectPage(reqVO, new LambdaQueryWrapperX<CouponUserDO>()
-                .eqIfPresent(CouponUserDO::getShopId, reqVO.getShopId())
+                .eq(CouponUserDO::getShopId, shopId)
                 .likeIfPresent(CouponUserDO::getShopName, reqVO.getShopName())
                 .eqIfPresent(CouponUserDO::getTitle, reqVO.getTitle())
                 .eqIfPresent(CouponUserDO::getLeast, reqVO.getLeast())
@@ -36,8 +39,9 @@ public interface CouponUserMapper extends BaseMapperX<CouponUserDO> {
     }
 
     default List<CouponUserDO> selectList(CouponUserExportReqVO reqVO) {
+        String shopId = ShopAccess.shopKey(ShopSecurityUtils.currentStaffShop(reqVO.getShopId()));
         return selectList(new LambdaQueryWrapperX<CouponUserDO>()
-                .eqIfPresent(CouponUserDO::getShopId, reqVO.getShopId())
+                .eq(CouponUserDO::getShopId, shopId)
                 .likeIfPresent(CouponUserDO::getShopName, reqVO.getShopName())
                 .eqIfPresent(CouponUserDO::getTitle, reqVO.getTitle())
                 .eqIfPresent(CouponUserDO::getLeast, reqVO.getLeast())

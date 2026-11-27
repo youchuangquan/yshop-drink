@@ -12,7 +12,32 @@
 		 </view>
 		 <scroll-view class="cart-page__list" scroll-y>
 		  <view class="cart-page__list-inner">
-		   <uv-empty mode="car" v-if="cart.length == 0"></uv-empty>
+		   <uv-empty mode="car" v-if="cart.length == 0 && !flavors.length && !addonChoices.length"></uv-empty>
+		   <view class="cart-item" v-if="flavors.length">
+			<view class="cart-item__info">
+			 <view class="cart-item__name">口味</view>
+			 <view class="cart-item__props">
+			  <text v-for="item in flavors" :key="item.id" @tap="onPickFlavor(item.id)">
+			   {{ item.name }} ￥{{ item.price }}{{ sameOptionId(selection.flavorOptionId, item.id) ? ' 已选' : '' }}
+			  </text>
+			 </view>
+			</view>
+		   </view>
+		   <view class="cart-item" v-for="item in addonChoices" :key="item.id">
+			<view class="cart-item__info">
+			 <view class="cart-item__name">加料 {{ item.name }}</view>
+			 <view class="cart-item__props">￥{{ item.price }}</view>
+			</view>
+			<view class="cart-item__controls">
+			 <button type="default" plain size="mini" class="cart-item__btn" hover-class="none" @tap="onAddon(item.id, -1)">
+			  <view class="iconfont iconsami-select"></view>
+			 </button>
+			 <view class="cart-item__qty">{{ addonNumber(selection, item.id) }}</view>
+			 <button type="primary" class="cart-item__btn" size="min" hover-class="none" @tap="onAddon(item.id, 1)">
+			  <view class="iconfont iconadd-select"></view>
+			 </button>
+			</view>
+		   </view>
 		   <view class="cart-item" v-for="(item, index) in cart" :key="`${item.id}-${item.valueStr || index}`">
 			<view class="cart-item__info">
 			 <view class="cart-item__name">{{ item.name }}</view>
@@ -37,7 +62,7 @@
 		 </scroll-view>
 	 </view>
 	 <view class="fixed-bottom flex justify-between align-center bg-white">
-	 	<view class="mx-2 font-weight-light">应付:<text class="text-danger">￥{{ getCartGoodsPrice }}</text></view>
+	 	<view class="mx-2 font-weight-light">商品:<text class="text-danger">￥{{ getCartGoodsPrice }}</text></view>
 	 	<view><uv-button type="primary" :customStyle="customStyle" size="large" text="去结算" @click="toPay"></uv-button></view>
 	 </view>
 	 <uv-toast ref="uToast"></uv-toast>
@@ -51,18 +76,44 @@ import {
 import { useMainStore } from '@/store/store'
 import { storeToRefs } from 'pinia'
 import { onLoad,onShow} from '@dcloudio/uni-app'
+import { cartKey, malatangKey } from '@/utils/shopSession'
+import { pricedOptions, pickFlavor, changeAddon, addonNumber, normalizeSelection, sameOptionId } from '@/utils/malatang'
 const main = useMainStore()
 const { orderType,address, store,location,isLogin } = storeToRefs(main)
 const title = ref('购物车')
 const cart = ref([])
+const selection = ref({ flavorOptionId: null, addons: [] })
+const flavors = computed(() => pricedOptions(store.value && store.value.options, 'FLAVOR'))
+const addonChoices = computed(() => pricedOptions(store.value && store.value.options, 'ADDON'))
 const uToast = ref()
 
 // onLoad(() => {
 // 	cart.value = uni.getStorageSync('cart')
 // })
+const loadSelection = () => {
+	if (!store.value.id) {
+		selection.value = { flavorOptionId: null, addons: [] }
+		return
+	}
+	selection.value = normalizeSelection(uni.getStorageSync(malatangKey(store.value.id)))
+}
+const saveSelection = () => {
+	if (!store.value.id) {
+		return
+	}
+	uni.setStorageSync(malatangKey(store.value.id), JSON.parse(JSON.stringify(selection.value)))
+}
+const onPickFlavor = (optionId) => {
+	selection.value = pickFlavor(selection.value, optionId)
+	saveSelection()
+}
+const onAddon = (optionId, delta) => {
+	selection.value = changeAddon(selection.value, optionId, delta)
+	saveSelection()
+}
 onShow(() => {
-	//cart.value = []
-	cart.value = uni.getStorageSync('cart')
+	cart.value = store.value.id ? (uni.getStorageSync(cartKey(store.value.id)) || []) : []
+	loadSelection()
 })
 const getCartGoodsNumber = computed(() => { //计算购物车总数
 	if(cart.value.length == 0) {
@@ -85,7 +136,7 @@ const customStyle = computed(() =>{
 })
 const handleCartItemAdd = (index) => {
 	cart.value[index].number += 1
-	uni.setStorageSync('cart', JSON.parse(JSON.stringify(cart.value)))
+	if (store.value.id) { uni.setStorageSync(cartKey(store.value.id), JSON.parse(JSON.stringify(cart.value))); uni.removeStorageSync('cart') }
 }
 const handleCartItemReduce = (index) => {
 	if (cart.value[index].number === 1) {
@@ -96,7 +147,7 @@ const handleCartItemReduce = (index) => {
 	if (!cart.value.length) {
 		cartPopupVisible.value = false
 	}
-	uni.setStorageSync('cart', JSON.parse(JSON.stringify(cart.value)))
+	if (store.value.id) { uni.setStorageSync(cartKey(store.value.id), JSON.parse(JSON.stringify(cart.value))); uni.removeStorageSync('cart') }
 }
 const handleCartClear = () => { //清空购物车
 	uni.showModal({
@@ -107,7 +158,7 @@ const handleCartClear = () => { //清空购物车
 		}) => {
 			if (confirm) {
 				cart.value = []
-				uni.setStorageSync('cart', JSON.parse(JSON.stringify(cart.value)))
+				if (store.value.id) { uni.setStorageSync(cartKey(store.value.id), JSON.parse(JSON.stringify(cart.value))); uni.removeStorageSync('cart') }
 			}
 		}
 	})
@@ -138,7 +189,7 @@ const toPay = () => {
 		uni.showLoading({
 			title: '加载中'
 		})
-		uni.setStorageSync('cart', JSON.parse(JSON.stringify(cart.value)))
+		if (store.value.id) { uni.setStorageSync(cartKey(store.value.id), JSON.parse(JSON.stringify(cart.value))); uni.removeStorageSync('cart') }
 
 		uni.navigateTo({
 			url: '/pages-checkout/pay/pay'

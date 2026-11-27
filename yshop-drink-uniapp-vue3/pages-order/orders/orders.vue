@@ -17,7 +17,7 @@
 							<view class="font-size-lg text-color-base orders-item__shop">
 								{{ item.shop.name }}
 							</view>
-							<view class="font-size-sm text-color-assist">取餐号：{{ item.numberId }}</view>
+							<view class="font-size-sm text-color-assist" v-if="queueNumberVisible(item.numberId)">取餐号：{{ item.numberId }}</view>
 							<view class="font-size-sm text-color-assist">订单编号：{{ item.orderId }}</view>
 						</view>
 						<view class="font-size-lg text-color-primary">
@@ -74,12 +74,13 @@ import { useMainStore } from '@/store/store'
 import { storeToRefs } from 'pinia'
 import { onLoad,onPullDownRefresh,onReachBottom} from '@dcloudio/uni-app'
 import { formatDateTime,kmUnit } from '@/utils/util'
+import { queueNumberVisible } from '@/utils/malatang'
 import {
   orderGetOrders,
   orderReceive
 } from '@/api/order'
 const main = useMainStore()
-const { isLogin } = storeToRefs(main)
+const { isLogin, store } = storeToRefs(main)
 const title = ref('我的订单')
 
 const page = ref(1)
@@ -139,7 +140,7 @@ const getOrders = async(isRefresh = false) => {
 		orders.value = []
 		page.value = 1
 	}
-	let ordersData = await orderGetOrders({page:page.value, limit:pageSize.value,type:type.value});
+	let ordersData = await orderGetOrders({page:page.value, limit:pageSize.value,type:type.value, shopId: store.value.id});
 
 	if(ordersData) {
 		orders.value = orders.value.concat(ordersData)
@@ -155,7 +156,7 @@ const detail = (id) => {
 }
 // 确认收到货
 const receive  = async(order) => {
-	let data = await orderReceive({uni:order.orderId});
+	let data = await orderReceive({uni:order.orderId, shopId: store.value.id});
 	if (data) {
 		await getOrders(true)
 	}

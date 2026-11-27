@@ -33,5 +33,15 @@ public class OrderNumberDO  {
      */
     private String orderId;
 
+    /**
+     * 门店。新取餐号按店隔离，旧行可以空。
+     */
+    private Long shopId;
+
+    /**
+     * 本店取餐序号。付款后才写入。
+     */
+    private Integer numberNo;
+
 
 }

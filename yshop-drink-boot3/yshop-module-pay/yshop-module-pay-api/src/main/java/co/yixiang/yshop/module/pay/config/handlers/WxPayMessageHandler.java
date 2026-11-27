@@ -7,7 +7,6 @@ import com.egzosn.pay.common.bean.PayOutMessage;
 import com.egzosn.pay.common.exception.PayErrorException;
 import com.egzosn.pay.wx.bean.WxPayMessage;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import jakarta.annotation.Resource;
@@ -32,12 +31,25 @@ public class WxPayMessageHandler implements PayMessageHandler<WxPayMessage, PayS
 
         //交易状态
         if ("SUCCESS".equals(payMessage.getPayMessage().get("result_code"))){
-            String orderId = (String)payMessage.getPayMessage().get("out_trade_no");
-            //消息队列处理
-            payNoticeProducer.sendPayNoticeMessage(orderId,"weixin");
-            return  payService.getPayOutMessage("SUCCESS", "OK");
+            String orderId = text(payMessage.getPayMessage().get("out_trade_no"));
+            String notifyKey = text(payMessage.getPayMessage().get("transaction_id"));
+            // 微信未接通。记下通知号后仍返回失败，入账时也不会把订单标成已付。
+            if (orderId == null || notifyKey == null) {
+                log.warn("微信支付通知缺少订单号或通知键，拒绝入账");
+                return payService.getPayOutMessage("FAIL", "失败");
+            }
+            payNoticeProducer.sendPayNoticeMessage(orderId, "weixin", notifyKey);
+            return payService.getPayOutMessage("FAIL", "失败");
         }
 
         return  payService.getPayOutMessage("FAIL", "失败");
+    }
+
+    private static String text(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        String value = String.valueOf(raw).trim();
+        return value.isEmpty() ? null : value;
     }
 }

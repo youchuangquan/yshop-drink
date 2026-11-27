@@ -17,4 +17,7 @@ public class AppDoOrderParam {
     @NotBlank(message = "参数有误")
     @Schema(description = "订单ID", required = true)
     private String uni;
+
+    @Schema(description = "门店ID", required = true)
+    private String shopId;
 }

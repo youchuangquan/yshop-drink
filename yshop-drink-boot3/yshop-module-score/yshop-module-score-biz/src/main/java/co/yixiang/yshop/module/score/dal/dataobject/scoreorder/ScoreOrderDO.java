@@ -33,9 +33,18 @@ public class ScoreOrderDO extends BaseDO {
     private Long uid;
 
     /**
+     * 门店 id
+     */
+    private Long shopId;
+
+    /**
      * 订单编号
      */
     private String orderId;
+    /**
+     * 客户端稳定请求键。空值是旧客户端，不是防重。
+     */
+    private String requestKey;
     /**
      * 商品id
      */

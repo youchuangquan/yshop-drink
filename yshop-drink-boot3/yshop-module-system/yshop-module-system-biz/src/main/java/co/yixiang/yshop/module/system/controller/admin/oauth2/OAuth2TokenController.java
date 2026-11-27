@@ -43,6 +43,11 @@ public class OAuth2TokenController {
     @Parameter(name = "accessToken", description = "访问令牌", required = true, example = "tudou")
     @PreAuthorize("@ss.hasPermission('system:oauth2-token:delete')")
     public CommonResult<Boolean> deleteAccessToken(@RequestParam("accessToken") String accessToken) {
+        long shopId = co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils.currentStaffShop(null);
+        OAuth2AccessTokenDO token = oauth2TokenService.getAccessToken(accessToken);
+        if (token != null) {
+            co.yixiang.yshop.framework.common.shop.ShopAccess.assertSameShop(token.getShopId(), shopId);
+        }
         authService.logout(accessToken, LoginLogTypeEnum.LOGOUT_DELETE.getType());
         return success(true);
     }

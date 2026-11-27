@@ -47,12 +47,16 @@ import {
   getCurrentInstance
 } from 'vue'
 import { onReachBottom,onLoad,onPullDownRefresh} from '@dcloudio/uni-app'
+import { useMainStore } from '@/store/store'
+import { storeToRefs } from 'pinia'
 import {
   scoreShopExchange,
   scoreShopDetail
 } from '@/api/score'
 import cookie from '@/utils/cookie'
 const { proxy } = getCurrentInstance();
+const main = useMainStore()
+const { store } = storeToRefs(main)
 
 const buttonText = ref("立即兑换")
 const specClass = ref('none')
@@ -102,7 +106,8 @@ const valChange = (e) => {
 // 获取商品详情
 const  getDetail = async(id, flash_id) => {
 	let data = await scoreShopDetail({
-		id: id
+		id: id,
+		shopId: store.value.id
 	});
 	uni.stopPullDownRefresh();
 	product.value = data;

@@ -2,6 +2,23 @@ import { defineStore } from 'pinia'
 
 import cookie from '@/utils/cookie'
 import { navigateTo } from '@/utils/router'
+import { createShopSession } from '@/utils/shopSession'
+
+function uniStorage() {
+  return {
+    get(key) {
+      return uni.getStorageSync(key)
+    },
+    set(key, value) {
+      uni.setStorageSync(key, value)
+    },
+    remove(key) {
+      uni.removeStorageSync(key)
+    },
+  }
+}
+
+const shopSession = createShopSession(uniStorage())
 
 export const useMainStore = defineStore('main', {
   state: () => ({
@@ -29,9 +46,11 @@ export const useMainStore = defineStore('main', {
   actions: {
 	DEL_COUPON() {
 	    	this.mycoupon = {}
+	    	shopSession.setCoupon(null)
 	},
 	SET_COUPON(coupon) {
 	  	this.mycoupon = coupon
+	  	shopSession.setCoupon(coupon)
 	},
 	SET_ORDER_TYPE(type) {
 	  	this.orderType = type
@@ -47,10 +66,21 @@ export const useMainStore = defineStore('main', {
 		this.addresses = addresses
 	},
 	SET_STORE(store) {
+		const switched = shopSession.bindShop(store || {})
 		this.store = store
+		if (switched.cleared) {
+			this.cart = []
+			this.mycoupon = {}
+			return
+		}
+		if (switched.shopId) {
+			this.cart = shopSession.state.cart
+			this.mycoupon = shopSession.state.coupon || {}
+		}
 	},
 	SET_CART(cart) {
 		this.cart = cart
+		shopSession.setCart(cart)
 	},
 	REMOVE_CART(state) {
 		this.cart = []

@@ -13,6 +13,8 @@ export interface ShopVO {
   distance: number
   minPrice: number
   deliveryPrice: number
+  packingPrice?: number | string | null
+  options?: { id?: number; kind: string; name: string; price: number | string }[]
   notice: string
   status: boolean
   adminId: string

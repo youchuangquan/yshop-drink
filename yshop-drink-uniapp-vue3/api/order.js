@@ -14,6 +14,10 @@ export function orderSubmit(data) {
   return api.post(`/order/create`, data, { login: true })
 }
 
+export function orderQuote(data) {
+  return api.post(`/order/quote`, data, { login: true })
+}
+
 
 
 /**
@@ -27,8 +31,8 @@ export function orderGetOrders(data) {
 /**
  * 计算详情 
  */
-export function orderDetail(data) {
-  return api.get(`/order/detail/${data}`, data, { login: true })
+export function orderDetail(id, shopId) {
+  return api.get(`/order/detail/${id}`, { shopId }, { login: true })
 }
 
 
