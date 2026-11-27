@@ -65,6 +65,14 @@
              <div>下单时间:{{ formatDate(order.createTime) }}</div>
              <div>取餐时间:{{ formatDate(order.getTime) }}</div>
              <div>类型:{{ order.orderType == 'takeout' ? '外卖' : '自取' }}</div>
+             <template v-if="order.orderType == 'takeout'">
+               <div v-if="order.realName">收货人:{{ order.realName }}</div>
+               <div v-if="order.userPhone">联系电话:{{ order.userPhone }}</div>
+               <div v-if="order.userAddress">收货地址:{{ order.userAddress }}</div>
+               <div v-if="order.packingPrice != null">打包费:{{ order.packingPrice }}</div>
+               <div v-if="order.payPostage != null">支付邮费:{{ order.payPostage }}</div>
+               <div v-if="order.payPrice != null">实际支付:{{ order.payPrice }}</div>
+             </template>
              <div>  
                <el-button
                  type="primary"
@@ -154,7 +162,14 @@ const showDeliveryButton = (order, target: 1 | 2) => {
   if (Number(order.paid) !== 1 || Number(order.refundStatus) !== 0) {
     return false
   }
-  return Number(order.status) === target - 1
+  const status = Number(order.status)
+  if (status === 2 || status === 3) {
+    return false
+  }
+  if (target === 1) {
+    return status === 0
+  }
+  return target === 2 && status === 1
 }
 
 const moveDelivery = async (order, status: 1 | 2) => {
