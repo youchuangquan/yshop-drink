@@ -16,6 +16,10 @@ public class HotpotSessionResp {
 
     private Long slotId;
 
+    private Long holdId;
+
+    private Long ownerUid;
+
     private Integer version;
 
     private Integer payableFen;
@@ -32,6 +36,8 @@ public class HotpotSessionResp {
 
     private List<PotLine> pots;
 
+    private List<DishLine> dishes;
+
     @Data
     public static class PotLine {
 
@@ -40,6 +46,19 @@ public class HotpotSessionResp {
         private String name;
 
         private Integer priceFen;
+
+    }
+
+    @Data
+    public static class DishLine {
+
+        private Long productId;
+
+        private String name;
+
+        private Integer priceFen;
+
+        private Integer quantity;
 
     }
 

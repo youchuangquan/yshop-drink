@@ -85,8 +85,14 @@ class HotpotQueryTest {
         HotpotFlow.Session session = HotpotFlow.open(board, SHOP, slot.id, "F6", GUEST, false, "bill-query-01");
 
         HotpotFlow.BoundBill bill = HotpotFlow.boundBill(board, SHOP, "F6", GUEST);
-        assertEquals(List.of("sessionId"), names(HotpotFlow.BoundBill.class));
+        assertEquals(List.of("sessionId", "version", "payableFen", "status", "pots", "dishes"),
+                names(HotpotFlow.BoundBill.class));
         assertEquals(session.id, bill.sessionId());
+        assertEquals(session.version, bill.version());
+        assertEquals(session.payableFen, bill.payableFen());
+        assertEquals("OPEN", bill.status());
+        assertTrue(bill.pots().isEmpty());
+        assertTrue(bill.dishes().isEmpty());
 
         ServiceException stranger = assertThrows(ServiceException.class,
                 () -> HotpotFlow.boundBill(board, SHOP, "F6", OTHER_GUEST));

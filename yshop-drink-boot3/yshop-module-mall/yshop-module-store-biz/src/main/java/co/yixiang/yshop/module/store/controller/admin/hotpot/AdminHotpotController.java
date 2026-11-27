@@ -45,7 +45,8 @@ public class AdminHotpotController {
     @Operation(summary = "新增一个时段容量")
     @PreAuthorize("@ss.hasPermission('store:shop:update')")
     public CommonResult<HotpotSlotResp> createSlot(@Valid @RequestBody AdminHotpotCommands.Slot req) {
-        return success(hotpotService.createSlot(shopId(), loginUser(), req.getCapacity(), req.getRequestKey()));
+        return success(hotpotService.createSlot(shopId(), loginUser(), req.getCapacity(), req.getStartTime(),
+                req.getEndTime(), req.getRequestKey()));
     }
 
     @PostMapping("/table")
@@ -104,6 +105,14 @@ public class AdminHotpotController {
     @PreAuthorize("@ss.hasPermission('store:shop:update')")
     public CommonResult<HotpotHoldResp> walkIn(@Valid @RequestBody AdminHotpotCommands.WalkIn req) {
         return success(hotpotService.walkIn(shopId(), req.getSlotId(), req.getSignCode(), 0L, true, req.getRequestKey()));
+    }
+
+    @PostMapping("/reservation/seat")
+    @Operation(summary = "把预约安排到空桌并开出台次")
+    @PreAuthorize("@ss.hasPermission('store:shop:update')")
+    public CommonResult<HotpotSessionResp> seatReservation(@Valid @RequestBody AdminHotpotCommands.ReservationSeat req) {
+        return success(hotpotService.seatReservation(shopId(), req.getHoldId(), req.getSlotId(), req.getSignCode(),
+                req.getRequestKey()));
     }
 
     @PostMapping("/session/open")
