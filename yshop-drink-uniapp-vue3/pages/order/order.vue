@@ -48,7 +48,7 @@
 						</view>
 						<view class="d-flex align-items-center justify-content-end order-item__actions">
 							<button
-								v-if="item.paid > 0 && item.status < 2 && item.refundStatus == 0"
+								v-if="item.orderType != 'takeout' && item.paid > 0 && item.status < 2 && item.refundStatus == 0"
 								class="order-item__btn"
 								plain
 								size="mini"
@@ -158,6 +158,9 @@ const detail = (id) => {
 }
 // 确认收到货
 const receive  = async(order) => {
+	if (!order || order.orderType == 'takeout') {
+		return
+	}
 	let data = await orderReceive({uni:order.orderId, shopId: store.value.id});
 	if (data) {
 		await getOrders(true)

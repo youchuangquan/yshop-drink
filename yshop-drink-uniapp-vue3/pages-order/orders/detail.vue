@@ -35,7 +35,7 @@
 											<view class="iconfont-yshop icon-lamp"></view>
 										</view>
 										<view class="order-detail-steps__icon-item">
-											<view class="iconfont-yshop icon-daojishi" v-if="{active: order.paid == 1 && order.status == 0}"></view>
+											<view class="iconfont-yshop icon-daojishi" v-if="order.paid == 1 && order.status == 0"></view>
 											<view class="iconfont-yshop icon-daojishi order-detail-steps__icon--inactive" v-else></view>
 										</view>
 										<view class="order-detail-steps__icon-item" v-if="order.orderType == 'takeout'">
@@ -174,6 +174,18 @@
 				<!-- order other info begin -->
 				<list-cell :hover="false" padding="50rpx 30rpx 20rpx" last>
 					<view class="w-100 d-flex flex-column">
+						<view class="order-detail-pay-cell" v-if="order.realName">
+							<view>收货人</view>
+							<view class="font-weight-bold">{{ order.realName }}</view>
+						</view>
+						<view class="order-detail-pay-cell" v-if="order.userPhone">
+							<view>联系电话</view>
+							<view class="font-weight-bold">{{ order.userPhone }}</view>
+						</view>
+						<view class="order-detail-pay-cell" v-if="order.userAddress">
+							<view>收货地址</view>
+							<view class="font-weight-bold">{{ order.userAddress }}</view>
+						</view>
 						<view class="order-detail-pay-cell">
 							<view>享用方式</view>
 							<view class="font-weight-bold">{{order.orderType == 'takein' ? '自取' : '外卖'}}</view>
@@ -195,7 +207,7 @@
 				<!-- order other info end -->
 			</view>
 			<view class="fixed-bottom flex justify-end bg-white p-2" v-if="order.paid > 0 && order.refundStatus == 0">
-				<view class="mr-1"><uv-button type="success" v-if="order.status < 2" :plain="true" size="small" text="确认收到餐" @click="receive(order)"></uv-button></view>
+				<view class="mr-1" v-if="order.orderType != 'takeout' && order.status < 2"><uv-button type="success" :plain="true" size="small" text="确认收到餐" @click="receive(order)"></uv-button></view>
 				<view><uv-button type="warning" :plain="true" size="small" text="申请退款" @click="refund(order)"></uv-button></view>
 			</view>
 		</view>
@@ -257,6 +269,9 @@ const makePhoneCall = () =>{
 
 // 确认收到货
 const receive  = async(order) => {
+	if (!order || order.orderType == 'takeout') {
+		return
+	}
 	let data = await orderReceive({uni:order.orderId, shopId: store.value.id});
 	if (data) {
 		await getOrders(true)

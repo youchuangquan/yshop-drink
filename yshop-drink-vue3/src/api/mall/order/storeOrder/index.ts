@@ -73,6 +73,28 @@ export const updateStoreOrder = async (data: StoreOrderVO) => {
   return await request.put({ url: `/order/store-order/update`, data })
 }
 
+export interface DeliveryStatusUpdate {
+  id: number
+  status: 1 | 2
+  shopId?: number
+  requestKey?: string
+}
+
+// 外卖配送状态。门店以登录店员为准，不把 shopId 当作授权。
+export const updateDeliveryStatus = async (data: DeliveryStatusUpdate) => {
+  if (data.status !== 1 && data.status !== 2) {
+    return Promise.reject(new Error('订单状态错误'))
+  }
+  const body: { id: number; status: 1 | 2; requestKey?: string } = {
+    id: data.id,
+    status: data.status
+  }
+  if (data.requestKey) {
+    body.requestKey = data.requestKey
+  }
+  return await request.put({ url: `/order/store-order/delivery-status`, data: body })
+}
+
 // 删除订单
 export const deleteStoreOrder = async (id: number) => {
   return await request.delete({ url: `/order/store-order/delete?id=` + id })

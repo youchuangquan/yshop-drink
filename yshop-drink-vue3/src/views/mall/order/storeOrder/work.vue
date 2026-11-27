@@ -77,6 +77,20 @@
                  v-hasPermi="['order:store-order:update']"
                >出单</el-button>
                <el-button
+                 v-if="showDeliveryButton(order, 1)"
+                 type="primary"
+                 :loading="deliveryId === order.id"
+                 @click="moveDelivery(order, 1)"
+                 v-hasPermi="['order:store-order:update']"
+               >待收货</el-button>
+               <el-button
+                 v-if="showDeliveryButton(order, 2)"
+                 type="primary"
+                 :loading="deliveryId === order.id"
+                 @click="moveDelivery(order, 2)"
+                 v-hasPermi="['order:store-order:update']"
+               >已收货</el-button>
+               <el-button
                  type="danger"
                  @click="handleDelete(order.id)"
                  v-hasPermi="['order:store-order:update']"
@@ -131,6 +145,31 @@ const queryFormRef = ref() // 搜索的表单
 const exportLoading = ref(false) // 导出的加载中
 
 const activeName = ref('first')
+const deliveryId = ref<number | null>(null)
+
+const showDeliveryButton = (order, target: 1 | 2) => {
+  if (!order || order.orderType !== 'takeout') {
+    return false
+  }
+  if (Number(order.paid) !== 1 || Number(order.refundStatus) !== 0) {
+    return false
+  }
+  return Number(order.status) === target - 1
+}
+
+const moveDelivery = async (order, status: 1 | 2) => {
+  if (!showDeliveryButton(order, status) || deliveryId.value != null) {
+    return
+  }
+  deliveryId.value = order.id
+  try {
+    await StoreOrderApi.updateDeliveryStatus({ id: order.id, status })
+    message.success(t('common.updateSuccess'))
+    await getList()
+  } finally {
+    deliveryId.value = null
+  }
+}
 
 
 
@@ -143,10 +182,23 @@ const handleClick = (tab: TabsPaneContext, event: Event) => {
 const getList = async () => {
  loading.value = true
  try {
-   const data = await StoreOrderApi.getStoreOrderPage(queryParams)
-   list.value = data.list
-   //console.log("aa:",list.value)
-   total.value = data.total
+   const waiting = await StoreOrderApi.getStoreOrderPage(queryParams)
+   const delivering = await StoreOrderApi.getStoreOrderPage({
+     ...queryParams,
+     orderStatus: 2,
+     orderType: 'takeout'
+   })
+   const seen = new Set()
+   const merged = []
+   for (const row of [...(waiting.list || []), ...(delivering.list || [])]) {
+     if (seen.has(row.id)) {
+       continue
+     }
+     seen.add(row.id)
+     merged.push(row)
+   }
+   list.value = merged
+   total.value = merged.length
  } finally {
    loading.value = false
  }
