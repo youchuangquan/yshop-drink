@@ -30,6 +30,11 @@ public interface StoreOrderService {
     void updateStoreOrder(@Valid StoreOrderUpdateReqVO updateReqVO);
 
     /**
+     * 店员更新本店外卖的履约状态。顾客不能写。只允许 0→1 和 1→2。
+     */
+    void updateDeliveryStatus(@Valid StoreOrderDeliveryStatusReqVO reqVO);
+
+    /**
      * 删除订单
      *
      * @param id 编号

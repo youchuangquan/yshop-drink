@@ -10,6 +10,7 @@ import co.yixiang.yshop.framework.common.enums.ShopCommonEnum;
 import co.yixiang.yshop.framework.common.exception.ErrorCode;
 import co.yixiang.yshop.framework.common.pojo.PageResult;
 import co.yixiang.yshop.framework.common.order.OrderRequestGate;
+import co.yixiang.yshop.framework.common.order.OrderRequestKeys;
 import co.yixiang.yshop.framework.common.order.OrderRequestTenant;
 import co.yixiang.yshop.framework.common.shop.ShopAccess;
 import co.yixiang.yshop.framework.security.core.util.ShopSecurityUtils;
@@ -27,8 +28,10 @@ import co.yixiang.yshop.module.order.controller.admin.storeorder.vo.*;
 import co.yixiang.yshop.module.order.convert.storeorder.StoreOrderConvert;
 import co.yixiang.yshop.module.order.dal.dataobject.storeorder.StoreOrderDO;
 import co.yixiang.yshop.module.order.dal.dataobject.storeordercartinfo.StoreOrderCartInfoDO;
+import co.yixiang.yshop.module.order.dal.dataobject.storeorderstatus.StoreOrderStatusDO;
 import co.yixiang.yshop.module.order.dal.mysql.storeorder.StoreOrderMapper;
 import co.yixiang.yshop.module.order.dal.mysql.storeordercartinfo.StoreOrderCartInfoMapper;
+import co.yixiang.yshop.module.order.dal.mysql.storeorderstatus.StoreOrderStatusMapper;
 import co.yixiang.yshop.module.order.enums.OrderLogEnum;
 import co.yixiang.yshop.module.order.enums.PayTypeEnum;
 import co.yixiang.yshop.module.order.enums.UpdateOrderEnum;
@@ -79,6 +82,8 @@ public class StoreOrderServiceImpl implements StoreOrderService {
     private StoreOrderCartInfoMapper storeOrderCartInfoMapper;
     @Resource
     private StoreOrderStatusService storeOrderStatusService;
+    @Resource
+    private StoreOrderStatusMapper storeOrderStatusMapper;
     @Resource
     private AppStoreOrderService appStoreOrderService;
     @Resource
@@ -131,27 +136,25 @@ public class StoreOrderServiceImpl implements StoreOrderService {
         // 校验存在
         // 更新
         StoreOrderDO updateObj = StoreOrderConvert.INSTANCE.convert(updateReqVO);
-        StoreOrderDO updateObj2 = requireStaffOrder(updateReqVO.getId());
-        updateObj.setShopId(updateObj2.getShopId());
+        StoreOrderDO existing = requireStaffOrder(updateReqVO.getId());
+        updateObj.setShopId(existing.getShopId());
+        boolean takeout = TakeoutDeliveryStatus.legacyWriteBlocked(existing.getOrderType());
+        if (takeout) {
+            // 外卖履约状态只能走配送状态接口。请求体里带的 status 不能写进来。
+            updateObj.setStatus(null);
+        }
 
-        //发货自取模式 直接收货
+        //发货自取模式 直接收货。以库里的订单类型为准，避免把外卖伪装成自取后收货。
         if(UpdateOrderEnum.ORDER_SEND.getValue().equals(updateReqVO.getUpdateType())
-                && updateObj.getOrderType().equals(OrderLogEnum.ORDER_TAKE_IN.getValue())){
+                && OrderLogEnum.ORDER_TAKE_IN.getValue().equals(existing.getOrderType())){
            this.takeStoreOrder(updateObj.getId());
             //todo 异步打印小票 商业版本才有 官网购买：https://www.yixiang.co
 
            return;
         }
-        //发货-外卖模式
-        if(UpdateOrderEnum.ORDER_SEND.getValue().equals(updateReqVO.getUpdateType())
-                && updateObj.getOrderType().equals(OrderLogEnum.ORDER_TAKE_OUT.getValue())){
-            updateObj.setStatus(OrderInfoEnum.STATUS_1.getValue());
-            //todo 异步打印小票 商业版本才有 官网购买：https://www.yixiang.co
-
-        }
         //堂食模式
         if(UpdateOrderEnum.ORDER_SEND.getValue().equals(updateReqVO.getUpdateType())
-                && updateObj.getOrderType().equals(OrderLogEnum.ORDER_TAKE_DESK.getValue())){
+                && OrderLogEnum.ORDER_TAKE_DESK.getValue().equals(existing.getOrderType())){
 
             //todo 异步打印小票 商业版本才有 官网购买：https://www.yixiang.co
 
@@ -177,19 +180,78 @@ public class StoreOrderServiceImpl implements StoreOrderService {
 //                        updateObj.getDeliveryId());
 //            }
 
-            //延时队列 1小时候自动收货
-            try {
-                RBlockingDeque<Object> blockingDeque = redissonClient.getBlockingDeque(ShopConstants.REDIS_ORDER_OUTTIME_UNCONFIRM);
-                RDelayedQueue<Object> delayedQueue = redissonClient.getDelayedQueue(blockingDeque);
-                delayedQueue.offer(OrderMsg.builder().orderId(updateObj.getOrderId()).build(), ShopConstants.ORDER_OUTTIME_UNCONFIRM, TimeUnit.MINUTES);
-                String s = TimeUnit.SECONDS.toSeconds(ShopConstants.ORDER_OUTTIME_UNCONFIRM) + "分钟";
-                log.info("添加延时队列成功 ，延迟时间：" + s);
-            } catch (Exception e) {
-                log.error(e.getMessage());
+            // 外卖不进自动收货队列，避免到点被推进到已完成。
+            if (!takeout) {
+                try {
+                    RBlockingDeque<Object> blockingDeque = redissonClient.getBlockingDeque(ShopConstants.REDIS_ORDER_OUTTIME_UNCONFIRM);
+                    RDelayedQueue<Object> delayedQueue = redissonClient.getDelayedQueue(blockingDeque);
+                    delayedQueue.offer(OrderMsg.builder().orderId(updateObj.getOrderId()).build(), ShopConstants.ORDER_OUTTIME_UNCONFIRM, TimeUnit.MINUTES);
+                    String s = TimeUnit.SECONDS.toSeconds(ShopConstants.ORDER_OUTTIME_UNCONFIRM) + "分钟";
+                    log.info("添加延时队列成功 ，延迟时间：" + s);
+                } catch (Exception e) {
+                    log.error(e.getMessage());
+                }
             }
 
         }
 
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void updateDeliveryStatus(StoreOrderDeliveryStatusReqVO reqVO) {
+        long shopId = ShopSecurityUtils.currentStaffShop(reqVO.getShopId());
+        StoreOrderDO order = requireStaffOrder(reqVO.getId());
+        if (reqVO.getStatus() == null) {
+            throw exception(ORDER_STATUS_ERROR);
+        }
+        String key = OrderRequestKeys.legacy(reqVO.getRequestKey());
+        TakeoutDeliveryStatus.Stamp stamp = findDeliveryStamp(order.getId(), key);
+        TakeoutDeliveryStatus.Move move = TakeoutDeliveryStatus.decide(snapshot(order), shopId,
+                reqVO.getStatus(), reqVO.getRequestKey(), stamp);
+        if (move.effect() == TakeoutDeliveryStatus.Effect.REPLAY) {
+            return;
+        }
+        int rows = storeOrderMapper.updateTakeoutDeliveryStatus(order.getId(), shopId, move.from(), move.to());
+        if (rows == 1) {
+            storeOrderStatusService.create(order.getUid(), order.getId(), TakeoutDeliveryStatus.CHANGE_TYPE,
+                    TakeoutDeliveryStatus.operationMessage(move.to(), move.requestKey()));
+            return;
+        }
+        StoreOrderDO again = requireStaffOrder(order.getId());
+        TakeoutDeliveryStatus.Stamp stampAgain = findDeliveryStamp(again.getId(), key);
+        TakeoutDeliveryStatus.Move second = TakeoutDeliveryStatus.decide(snapshot(again), shopId,
+                reqVO.getStatus(), reqVO.getRequestKey(), stampAgain);
+        if (second.effect() == TakeoutDeliveryStatus.Effect.REPLAY) {
+            return;
+        }
+        throw exception(ORDER_STATUS_ERROR);
+    }
+
+    private TakeoutDeliveryStatus.Stamp findDeliveryStamp(Long orderId, String key) {
+        if (orderId == null || key == null) {
+            return null;
+        }
+        List<StoreOrderStatusDO> rows = storeOrderStatusMapper.selectByOrderAndType(orderId, TakeoutDeliveryStatus.CHANGE_TYPE);
+        if (rows == null) {
+            return null;
+        }
+        for (StoreOrderStatusDO row : rows) {
+            if (row == null || !key.equals(TakeoutDeliveryStatus.keyOf(row.getChangeMessage()))) {
+                continue;
+            }
+            Integer target = TakeoutDeliveryStatus.targetOf(row.getChangeMessage());
+            if (target == null) {
+                continue;
+            }
+            return new TakeoutDeliveryStatus.Stamp(orderId, target, key);
+        }
+        return null;
+    }
+
+    private static TakeoutDeliveryStatus.Snapshot snapshot(StoreOrderDO order) {
+        return new TakeoutDeliveryStatus.Snapshot(order.getId(), order.getShopId(), order.getPaid(),
+                order.getOrderType(), order.getStatus(), order.getRefundStatus());
     }
 
     @Override
@@ -213,6 +275,9 @@ public class StoreOrderServiceImpl implements StoreOrderService {
     @Override
     public void takeStoreOrder(Long id) {
         StoreOrderDO storeOrderDO = requireStaffOrder(id);
+        if (TakeoutDeliveryStatus.legacyWriteBlocked(storeOrderDO.getOrderType())) {
+            return;
+        }
         appStoreOrderService.takeOrder(storeOrderDO.getOrderId(),storeOrderDO.getUid(), storeOrderDO.getShopId());
     }
 

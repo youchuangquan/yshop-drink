@@ -315,7 +315,7 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
             storeOrder.setFlavorPrice(quote.flavorAmount);
             storeOrder.setAddonPrice(quote.addonAmount);
             storeOrder.setDeductionPrice(deductionPrice);
-            storeOrder.setPaid(OrderInfoEnum.PAY_STATUS_0.getValue());
+            initializeFulfillment(storeOrder);
             storeOrder.setPayType(param.getPayType());
             storeOrder.setUseIntegral(BigDecimal.ZERO);
             storeOrder.setBackIntegral(BigDecimal.ZERO);
@@ -1012,11 +1012,7 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
             statusDTO.setType("2");
 
         } else if (OrderInfoEnum.STATUS_2.getValue().equals(order.getStatus())) {
-            if(OrderLogEnum.ORDER_TAKE_OUT.getValue().equals(order.getOrderType())){
-                statusDTO.setTitle("已收货");
-            }else{
-                statusDTO.setTitle("已取餐");
-            }
+            statusDTO.setTitle(receivedTitle(order.getOrderType()));
             statusDTO.setYClass("state-ypj");
             statusDTO.setMsg("已收货,快去评价一下吧");
             statusDTO.setType("3");
@@ -1045,6 +1041,24 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
 
 
     /**
+     * 顾客下单时显式写成未支付、履约默认。不依赖表字段默认值。
+     */
+    static void initializeFulfillment(StoreOrderDO order) {
+        order.setPaid(OrderInfoEnum.PAY_STATUS_0.getValue());
+        order.setStatus(OrderInfoEnum.STATUS_0.getValue());
+    }
+
+    /**
+     * 外卖 status=2 的顾客标题用「已送达」，其它类型仍是「已取餐」。
+     */
+    static String receivedTitle(String orderType) {
+        if (OrderLogEnum.ORDER_TAKE_OUT.getValue().equals(orderType)) {
+            return "已送达";
+        }
+        return "已取餐";
+    }
+
+    /**
      * 订单确认收货
      *
      * @param orderId 单号
@@ -1053,6 +1067,9 @@ public class AppStoreOrderServiceImpl extends ServiceImpl<StoreOrderMapper,Store
     @Override
     public void takeOrder(String orderId, Long uid, Long shopId) {
         AppStoreOrderQueryVo order = requireCustomerOrder(orderId, uid, shopId);
+        if (TakeoutDeliveryStatus.legacyWriteBlocked(order.getOrderType())) {
+            return;
+        }
 
         if (OrderInfoEnum.PAY_STATUS_0.getValue().equals(order.getPaid())) {
             throw exception(ORDER_STATUS_ERROR);

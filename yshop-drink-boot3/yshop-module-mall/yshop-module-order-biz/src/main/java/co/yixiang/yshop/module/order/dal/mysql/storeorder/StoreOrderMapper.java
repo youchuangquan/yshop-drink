@@ -19,6 +19,7 @@ import org.apache.ibatis.annotations.Mapper;
 import co.yixiang.yshop.module.order.controller.admin.storeorder.vo.*;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 /**
  * 订单 Mapper
@@ -129,6 +130,16 @@ public interface StoreOrderMapper extends BaseMapperX<StoreOrderDO> {
             + "ORDER BY id ASC LIMIT 1")
     StoreOrderDO selectByRequestKeyAnyState(@Param("uid") Long uid, @Param("shopId") Long shopId,
                                             @Param("requestKey") String requestKey);
+
+    /**
+     * 只改本店外卖的履约状态。paid、费用和地址都不在 SET 里。
+     * 0 未支付、退款中、已退款、以及当前状态已经不是 fromStatus 的行，更新行数为 0。
+     */
+    @Update("UPDATE yshop_store_order SET status = #{toStatus} "
+            + "WHERE id = #{id} AND shop_id = #{shopId} AND status = #{fromStatus} "
+            + "AND paid = 1 AND order_type = 'takeout' AND refund_status = 0 AND deleted = 0")
+    int updateTakeoutDeliveryStatus(@Param("id") Long id, @Param("shopId") Long shopId,
+                                    @Param("fromStatus") Integer fromStatus, @Param("toStatus") Integer toStatus);
 
     @Select("select IFNULL(sum(pay_price),0) from yshop_store_order " +
             "where paid=1 and deleted=0 and refund_status=0 and uid=#{uid}")
