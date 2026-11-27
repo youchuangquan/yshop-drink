@@ -28,7 +28,7 @@
       type="info"
       :closable="false"
       show-icon
-      title="时段没有开始或结束时间，不能标记已过点。迟到不会自动取消，也没有到店保留时长。"
+      title="时段带有开始和结束时刻，且结束时刻已过时，本表会标出「时段已过」，只作提醒。不会自动取消，不会释放名额，也没有到店保留时长。没有时刻，或时刻跨过午夜，不标。"
     />
     <el-alert
       v-if="ignoredHolds > 0"
@@ -40,19 +40,54 @@
     />
     <el-table v-loading="loading" :data="holds">
       <el-table-column label="占位" align="center" prop="id" />
-      <el-table-column label="时段" align="center" prop="slotId" />
+      <el-table-column label="时段" align="center" min-width="200">
+        <template #default="scope">
+          {{ holdSlotText(scope.row) }}
+        </template>
+      </el-table-column>
       <el-table-column label="顾客编号" align="center" prop="uid" />
       <el-table-column label="状态" align="center" min-width="180">
         <template #default="scope">
-          {{ holdStatusText(scope.row) }}
+          <div>{{ holdStatusText(scope.row) }}</div>
+          <el-tag v-if="passedReminder(scope.row)" class="mt-5px" type="warning">时段已过</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" align="center" width="120">
+      <el-table-column label="操作" align="center" min-width="280">
         <template #default="scope">
+          <template v-if="canAssignTable(scope.row, shopId)">
+            <el-select
+              v-if="idleTables.length > 0"
+              :model-value="assignSign[scope.row.id]"
+              placeholder="空闲桌台"
+              clearable
+              class="!w-140px mr-5px"
+              :disabled="assigningId === scope.row.id"
+              @change="(value) => chooseTable(scope.row.id, value)"
+            >
+              <el-option
+                v-for="table in idleTables"
+                :key="table.tableId"
+                :label="table.signCode"
+                :value="table.signCode"
+              />
+            </el-select>
+            <span v-else class="mr-5px">没有空闲桌台</span>
+            <el-button
+              link
+              type="primary"
+              :disabled="reservationSeatBlockReason(shopId, scope.row, tableFor(scope.row)) != null"
+              :loading="assigningId === scope.row.id"
+              v-hasPermi="['store:shop:update']"
+              @click="assignTable(scope.row)"
+            >
+              安排空桌
+            </el-button>
+          </template>
           <el-button
             v-if="canSeat(scope.row, shopId)"
             link
             type="primary"
+            :disabled="assigningId != null"
             :loading="seatingId === scope.row.id"
             v-hasPermi="['store:shop:update']"
             @click="seat(scope.row)"
@@ -62,7 +97,9 @@
         </template>
       </el-table-column>
     </el-table>
-    <div class="mt-10px">入座只把这条预约标成已入座。现有接口不会为这条预约分配桌台或开桌次。</div>
+    <div class="mt-10px">
+      入座只把未入座的预约标成已入座，不分配桌台，也不开桌次。安排空桌把本店空桌绑到该顾客并开出桌次，时段名额不会再加一次。顾客编号为 0 的散客不走安排空桌。时段已过只是提醒。
+    </div>
   </ContentWrap>
 
   <ContentWrap v-if="shopId != null" title="散客开桌">
@@ -126,18 +163,25 @@ import * as HotpotApi from '@/api/mall/store/hotpot'
 import { useUserStore } from '@/store/modules/user'
 import {
   acceptOpen,
+  acceptReservationSeat,
   acceptSeat,
   boundShopId,
+  canAssignTable,
   canSeat,
   createRequestKey,
   forgetRequestKey,
   holdStatusText,
+  lateArrivalFlag,
   openBlockReason,
   openBody,
   openScope,
   partitionByShop,
+  reservationSeatBlockReason,
+  reservationSeatBody,
+  reservationSeatScope,
   seatBody,
   seatScope,
+  slotClockText,
   stableRequestKey,
   type HoldView,
   type SlotView,
@@ -151,6 +195,9 @@ const shopId = computed(() => boundShopId((userStore.getUser as { shopId?: unkno
 const loading = ref(false)
 const opening = ref(false)
 const seatingId = ref<number | null>(null)
+const assigningId = ref<number | null>(null)
+const clock = ref(new Date())
+const assignSign = ref<Record<number, string>>({})
 const holds = ref<HoldView[]>([])
 const slots = ref<SlotView[]>([])
 const tables = ref<TableView[]>([])
@@ -180,7 +227,36 @@ const openHint = computed(() => {
 })
 
 const slotLabel = (slot: SlotView) => {
-  return `时段 ${slot.slotId}（已占 ${slot.occupied} / ${slot.capacity}）`
+  const clockText = slotClockText(slot)
+  const time = clockText ? ` ${clockText}` : ''
+  return `时段 ${slot.slotId}${time}（已占 ${slot.occupied} / ${slot.capacity}）`
+}
+
+const slotFor = (hold: HoldView) => slots.value.find((slot) => slot.slotId === hold.slotId) ?? null
+
+const holdSlotText = (hold: HoldView) => {
+  const clockText = slotClockText(slotFor(hold))
+  return clockText ? `${hold.slotId} ${clockText}` : String(hold.slotId)
+}
+
+const passedReminder = (hold: HoldView) => lateArrivalFlag(slotFor(hold), clock.value) != null
+
+const tableFor = (hold: HoldView) => {
+  const code = assignSign.value[hold.id]
+  if (!code) {
+    return null
+  }
+  return tables.value.find((table) => table.signCode === code && table.occupied === false) ?? null
+}
+
+const chooseTable = (holdId: number, value: unknown) => {
+  const next = { ...assignSign.value }
+  if (typeof value === 'string' && value.trim() !== '') {
+    next[holdId] = value
+  } else {
+    delete next[holdId]
+  }
+  assignSign.value = next
 }
 
 const reload = async () => {
@@ -192,6 +268,7 @@ const reload = async () => {
     return
   }
   loading.value = true
+  clock.value = new Date()
   try {
     const [holdRows, slotRows, tableRows] = await Promise.all([
       HotpotApi.listHolds(),
@@ -213,6 +290,16 @@ const reload = async () => {
     if (selectedTable.value == null) {
       signCode.value = undefined
     }
+    const idleCodes = new Set(
+      tablePart.visible.filter((table) => table.occupied === false).map((table) => table.signCode)
+    )
+    const nextSign: Record<number, string> = {}
+    for (const [id, code] of Object.entries(assignSign.value)) {
+      if (idleCodes.has(code)) {
+        nextSign[Number(id)] = code
+      }
+    }
+    assignSign.value = nextSign
   } finally {
     loading.value = false
   }
@@ -220,7 +307,12 @@ const reload = async () => {
 
 const seat = async (hold: HoldView) => {
   const currentShop = shopId.value
-  if (currentShop == null || !canSeat(hold, currentShop) || seatingId.value != null) {
+  if (
+    currentShop == null ||
+    !canSeat(hold, currentShop) ||
+    seatingId.value != null ||
+    assigningId.value != null
+  ) {
     return
   }
   seatingId.value = hold.id
@@ -249,6 +341,57 @@ const seat = async (hold: HoldView) => {
     // 失败时保留同一个请求键，避免重试再记一笔。
   } finally {
     seatingId.value = null
+  }
+}
+
+const assignTable = async (hold: HoldView) => {
+  const currentShop = shopId.value
+  if (
+    currentShop == null ||
+    assigningId.value != null ||
+    seatingId.value != null ||
+    reservationSeatBlockReason(currentShop, hold, tableFor(hold))
+  ) {
+    return
+  }
+  assigningId.value = hold.id
+  try {
+    await message.confirm(
+      '确认把这条预约安排到所选空桌并开桌次？桌次属于该顾客，时段名额不会再占一次，也不会收款。'
+    )
+  } catch {
+    assigningId.value = null
+    return
+  }
+  const table = tableFor(hold)
+  if (!table || reservationSeatBlockReason(currentShop, hold, table)) {
+    assigningId.value = null
+    return
+  }
+  const scope = reservationSeatScope(currentShop, hold, table.signCode)
+  const requestKey = stableRequestKey(requestKeys, scope, createRequestKey)
+  try {
+    const result = await HotpotApi.seatReservation(
+      reservationSeatBody(hold, currentShop, table, requestKey)
+    )
+    const accepted = acceptReservationSeat(result, currentShop, hold)
+    if (!accepted.ok) {
+      message.error(accepted.reason)
+      await reload()
+      return
+    }
+    forgetRequestKey(requestKeys, scope)
+    const payable =
+      accepted.payableFen == null ? '应付未返回' : `应付 ${accepted.payableFen} 分，未收款`
+    message.success(`已为顾客 ${accepted.ownerUid} 开桌次 ${accepted.sessionId}，${payable}`)
+    const nextSign = { ...assignSign.value }
+    delete nextSign[hold.id]
+    assignSign.value = nextSign
+    await reload()
+  } catch {
+    // 失败时保留同一个请求键，只用于这张桌的重试。
+  } finally {
+    assigningId.value = null
   }
 }
 

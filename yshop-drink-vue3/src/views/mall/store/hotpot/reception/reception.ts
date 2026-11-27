@@ -1,17 +1,23 @@
 /**
- * 预约接待与散客开桌的页面规则。
- * 只组现有店员接口的报文，不带门店编号，也不带金额或支付渠道。
- * 时段没有开始或结束时间，这里不能判断是否已过点。
+ * 预约接待与散客开桌。
+ * 店号来自登录态，报文里不带门店编号，也不带金额或支付渠道。
+ * POST /store/hotpot/seat 只把 HELD 改成 SEATED，不分配桌台，也不开桌次。
+ * 预约安排到空桌走 POST /store/hotpot/reservation/seat。
+ * 顾客编号为 0 的散客仍走 POST /store/hotpot/session/open。
+ * 时段结束时刻已过时只在本页提醒，不取消，也不释放名额。
  */
 
 const KEY_PATTERN = /^[A-Za-z0-9_-]{8,64}$/
 const KEY_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-'
+const SLOT_CLOCK = /^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/
 
 export interface SlotView {
   slotId: number
   shopId: number
   capacity: number
   occupied: number
+  startTime?: string | null
+  endTime?: string | null
 }
 
 export interface TableView {
@@ -36,10 +42,28 @@ export interface SeatBody {
   requestKey: string
 }
 
+export interface ReservationSeatBody {
+  holdId: number
+  slotId: number
+  signCode: string
+  requestKey: string
+}
+
 export interface OpenBody {
   slotId: number
   signCode: string
   requestKey: string
+}
+
+export interface SlotWindow {
+  startTime: string
+  endTime: string
+}
+
+export interface PassedSlotReminder {
+  passed: true
+  startTime: string
+  endTime: string
 }
 
 export function boundShopId(raw: unknown): number | null {
@@ -91,9 +115,51 @@ export function forgetRequestKey(bucket: Map<string, string>, scope: string) {
 }
 
 /**
- * 没有时段时刻，不能标迟到。不接收停留时长。
+ * 只认成对的 HH:mm:ss。缺一边、或不是这个格式，就不当作时段时刻。
  */
-export function lateArrivalFlag(): null {
+export function slotWindow(slot: { startTime?: unknown; endTime?: unknown } | null | undefined): SlotWindow | null {
+  if (!slot) {
+    return null
+  }
+  if (typeof slot.startTime !== 'string' || typeof slot.endTime !== 'string') {
+    return null
+  }
+  if (!SLOT_CLOCK.test(slot.startTime) || !SLOT_CLOCK.test(slot.endTime)) {
+    return null
+  }
+  return { startTime: slot.startTime, endTime: slot.endTime }
+}
+
+export function slotClockText(slot: { startTime?: unknown; endTime?: unknown } | null | undefined): string {
+  const window = slotWindow(slot)
+  if (!window) {
+    return ''
+  }
+  return `${window.startTime} 至 ${window.endTime}`
+}
+
+/**
+ * 结束时刻已过只作提醒。不接收停留时长，也不看占位上另写的日期。
+ * 起止跨过午夜时没有日期，无法判断是未开始还是已结束，只展示时刻，不标。
+ * 调用方不传当前时间时不标。
+ */
+export function lateArrivalFlag(
+  slot?: { startTime?: unknown; endTime?: unknown } | null,
+  now?: Date
+): PassedSlotReminder | null {
+  const window = slotWindow(slot)
+  if (!window || !(now instanceof Date) || Number.isNaN(now.getTime())) {
+    return null
+  }
+  const start = clockSeconds(window.startTime)
+  const end = clockSeconds(window.endTime)
+  if (end <= start) {
+    return null
+  }
+  const current = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds()
+  if (current > end) {
+    return { passed: true, startTime: window.startTime, endTime: window.endTime }
+  }
   return null
 }
 
@@ -138,6 +204,69 @@ export function seatBody(hold: HoldView, shopId: number, requestKey: string): Se
 
 export function seatScope(shopId: number, hold: HoldView): string {
   return `seat:${shopId}:${hold.id}:${hold.slotId}`
+}
+
+export function canAssignTable(hold: HoldView | null | undefined, shopId: number | null): boolean {
+  if (shopId == null || !hold) {
+    return false
+  }
+  return (
+    hold.shopId === shopId &&
+    positive(hold.uid) &&
+    (hold.status === 'HELD' || hold.status === 'SEATED') &&
+    positive(hold.id) &&
+    positive(hold.slotId)
+  )
+}
+
+export function reservationSeatBlockReason(
+  shopId: number | null,
+  hold: HoldView | null | undefined,
+  table: TableView | null | undefined
+): string | null {
+  if (shopId == null) {
+    return '当前账号没有绑定门店'
+  }
+  if (!hold || hold.shopId !== shopId) {
+    return '请选择本店预约'
+  }
+  if (!positive(hold.uid)) {
+    return '散客请走开桌'
+  }
+  if (hold.status !== 'HELD' && hold.status !== 'SEATED') {
+    return '这条预约不能安排空桌'
+  }
+  if (!positive(hold.id) || !positive(hold.slotId)) {
+    return '这条预约不能安排空桌'
+  }
+  if (!table || table.shopId !== shopId || table.occupied !== false) {
+    return '请选择本店空闲桌台'
+  }
+  if (typeof table.signCode !== 'string' || table.signCode.trim() === '') {
+    return '请选择本店空闲桌台'
+  }
+  return null
+}
+
+export function reservationSeatBody(
+  hold: HoldView,
+  shopId: number,
+  table: TableView,
+  requestKey: string
+): ReservationSeatBody {
+  if (reservationSeatBlockReason(shopId, hold, table) || !isRequestKey(requestKey)) {
+    throw new Error('reservation seat rejected')
+  }
+  return {
+    holdId: hold.id,
+    slotId: hold.slotId,
+    signCode: table.signCode,
+    requestKey
+  }
+}
+
+export function reservationSeatScope(shopId: number, hold: HoldView, signCode: string): string {
+  return `reserve:${shopId}:${hold.id}:${hold.slotId}:${signCode}`
 }
 
 export function openBlockReason(
@@ -211,6 +340,8 @@ export interface SessionResult {
   sessionId?: number
   shopId?: number
   slotId?: number
+  holdId?: number | null
+  ownerUid?: number | null
   status?: string
   payableFen?: number | null
   paid?: boolean
@@ -235,6 +366,36 @@ export function acceptOpen(result: SessionResult | null | undefined, shopId: num
   }
 }
 
+export function acceptReservationSeat(
+  result: SessionResult | null | undefined,
+  shopId: number,
+  hold: HoldView
+) {
+  if (
+    !result ||
+    result.shopId !== shopId ||
+    result.slotId !== hold.slotId ||
+    result.holdId !== hold.id ||
+    result.ownerUid !== hold.uid ||
+    !positive(result.ownerUid) ||
+    !positive(result.sessionId)
+  ) {
+    return { ok: false as const, reason: '开桌结果与这条预约不一致' }
+  }
+  if (result.paid === true || result.paymentSuccess === true) {
+    return { ok: false as const, reason: '开桌结果带了已支付标记，本页不会把它当成已付款' }
+  }
+  if (result.zeroPayReleased === true || result.status !== 'OPEN') {
+    return { ok: false as const, reason: '开桌结果不是进行中的桌次' }
+  }
+  return {
+    ok: true as const,
+    sessionId: result.sessionId as number,
+    ownerUid: result.ownerUid as number,
+    payableFen: typeof result.payableFen === 'number' ? result.payableFen : null
+  }
+}
+
 export function holdStatusText(hold: HoldView): string {
   if (hold.status === 'HELD') {
     return '未入座'
@@ -250,6 +411,11 @@ export function holdStatusText(hold: HoldView): string {
 
 function positive(raw: unknown): raw is number {
   return typeof raw === 'number' && Number.isSafeInteger(raw) && raw > 0
+}
+
+function clockSeconds(hms: string): number {
+  const [hour, minute, second] = hms.split(':').map((part) => Number(part))
+  return hour * 3600 + minute * 60 + second
 }
 
 function cryptoByte(): number {
