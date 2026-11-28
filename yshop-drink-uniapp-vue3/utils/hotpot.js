@@ -17,6 +17,42 @@ export function shopReady(shopId) {
   return /^[1-9]\d*$/.test(shopId.trim())
 }
 
+function queryText(raw) {
+  if (typeof raw !== 'string' || raw === '') {
+    return ''
+  }
+  const mark = raw.indexOf('?')
+  return mark >= 0 ? raw.slice(mark + 1) : raw.replace(/^\?/, '')
+}
+
+function queryParam(raw, name) {
+  const text = queryText(raw)
+  if (!text) {
+    return ''
+  }
+  return new URLSearchParams(text).get(name) || ''
+}
+
+export function shopIdFromAddress(locationLike) {
+  if (!locationLike) {
+    return ''
+  }
+  const hash = typeof locationLike.hash === 'string' ? locationLike.hash : ''
+  const search = typeof locationLike.search === 'string' ? locationLike.search : ''
+  const raw = queryParam(hash, 'shopId') || queryParam(search, 'shopId')
+  return shopReady(raw) ? String(raw).trim() : ''
+}
+
+export function signCodeFromAddress(locationLike) {
+  if (!locationLike) {
+    return ''
+  }
+  const hash = typeof locationLike.hash === 'string' ? locationLike.hash : ''
+  const search = typeof locationLike.search === 'string' ? locationLike.search : ''
+  const raw = queryParam(hash, 'signCode') || queryParam(search, 'signCode')
+  return typeof raw === 'string' ? raw : ''
+}
+
 export function idReady(value) {
   if (typeof value === 'number') {
     return Number.isInteger(value) && value > 0

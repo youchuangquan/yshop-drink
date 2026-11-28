@@ -95,7 +95,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, getCurrentInstance, onMounted, onUnmounted, ref, watch } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
 import { storeToRefs } from 'pinia'
 import { useMainStore } from '@/store/store'
@@ -104,6 +104,8 @@ import { hotpotDish, hotpotScan, hotpotSlots } from '@/api/hotpot'
 import { createRequestKey } from '@/utils/request-key'
 import {
   shopReady,
+  shopIdFromAddress,
+  signCodeFromAddress,
   idReady,
   readScan,
   scanState,
@@ -122,6 +124,10 @@ import {
 
 const main = useMainStore()
 const { isLogin, store } = storeToRefs(main)
+const pageInstance = getCurrentInstance()
+const pageProxy = pageInstance ? pageInstance.proxy : null
+let stopRouteWatch = null
+let assigningShop = false
 const queryShopId = ref('')
 const typedCode = ref('')
 const loading = ref(false)
@@ -261,8 +267,10 @@ const applyScan = async (raw) => {
     resetOrder()
     return
   }
-  if (shopReady(parsed.shopId)) {
+  if (shopReady(parsed.shopId) && String(queryShopId.value) !== String(parsed.shopId)) {
+    assigningShop = true
     queryShopId.value = parsed.shopId
+    assigningShop = false
   }
   loading.value = true
   menuState.value = 'idle'
@@ -389,6 +397,73 @@ const placeDish = async (good) => {
     }
   }
 }
+
+function readAddressQuery() {
+  const locatedShop = typeof window === 'undefined' ? '' : shopIdFromAddress(window.location)
+  const locatedCode = typeof window === 'undefined' ? '' : signCodeFromAddress(window.location)
+  const routeQuery = pageProxy && pageProxy.$route && pageProxy.$route.query ? pageProxy.$route.query : null
+  const routeShop = routeQuery && shopReady(routeQuery.shopId) ? routeQuery.shopId : ''
+  const routeCode = routeQuery && typeof routeQuery.signCode === 'string' ? routeQuery.signCode : ''
+  return {
+    shopId: locatedShop || routeShop,
+    signCode: locatedCode || routeCode,
+  }
+}
+
+function syncAddressQuery() {
+  const incoming = readAddressQuery()
+  const codeChanged = Boolean(incoming.signCode) && incoming.signCode !== typedCode.value
+  if (codeChanged) {
+    typedCode.value = incoming.signCode
+  }
+  const shopChanged = shopReady(incoming.shopId) && String(queryShopId.value) !== String(incoming.shopId)
+  if (shopChanged) {
+    queryShopId.value = incoming.shopId
+    return
+  }
+  if (codeChanged && shopReady(shopId.value)) {
+    applyScan(`signCode=${encodeURIComponent(incoming.signCode)}&shopId=${encodeURIComponent(shopId.value)}`)
+  }
+}
+
+watch(shopId, (next, prev) => {
+  if (assigningShop || !shopReady(prev) || String(next) === String(prev)) {
+    return
+  }
+  const code = typedCode.value.trim()
+  resetOrder()
+  menu.value = []
+  menuState.value = 'idle'
+  table.value = { kind: '', showMenu: false, occupy: false }
+  if (code && shopReady(next)) {
+    applyScan(`signCode=${encodeURIComponent(code)}&shopId=${encodeURIComponent(next)}`)
+  }
+})
+
+onMounted(() => {
+  if (pageProxy && pageProxy.$route) {
+    stopRouteWatch = watch(() => {
+      const query = pageProxy.$route.query || {}
+      return `${query.shopId || ''}|${query.signCode || ''}`
+    }, () => syncAddressQuery())
+  }
+  if (typeof window !== 'undefined') {
+    window.addEventListener('hashchange', syncAddressQuery)
+    window.addEventListener('popstate', syncAddressQuery)
+  }
+  syncAddressQuery()
+})
+
+onUnmounted(() => {
+  if (stopRouteWatch) {
+    stopRouteWatch()
+  }
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.removeEventListener('hashchange', syncAddressQuery)
+  window.removeEventListener('popstate', syncAddressQuery)
+})
 
 onShow(() => {
   if (table.value.kind === 'idle' && !opened.value) {
