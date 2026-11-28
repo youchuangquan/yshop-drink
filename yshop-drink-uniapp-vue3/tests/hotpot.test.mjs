@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
   shopReady,
+  shopIdFromAddress,
+  signCodeFromAddress,
   remainingCapacity,
   visibleSlots,
   canReserve,
@@ -297,6 +299,15 @@ test('the bill shows returned lines and settles with the returned version, not a
   assert.equal(settleFailureText({}, 0), '结账没有完成，账单未支付。')
 })
 
+test('an address shop id is read from the hash or the search', () => {
+  assert.equal(shopIdFromAddress({ hash: '#/pages-hotpot/bill/bill?shopId=3&signCode=A1', search: '' }), '3')
+  assert.equal(signCodeFromAddress({ hash: '#/pages-hotpot/bill/bill?shopId=3&signCode=A1', search: '' }), 'A1')
+  assert.equal(shopIdFromAddress({ hash: '', search: '?shopId=8' }), '8')
+  assert.equal(shopIdFromAddress({ hash: '#/pages-hotpot/reserve/reserve?shopId=0', search: '' }), '')
+  assert.equal(shopIdFromAddress({ hash: '#/pages-hotpot/scan/scan?shopId=4', search: '?shopId=9' }), '4')
+  assert.equal(shopIdFromAddress(null), '')
+})
+
 test('customer pages stay on the existing hotpot reads and do not list reservations or wire pay', () => {
   const api = source('api/hotpot.js')
   for (const forbidden of ['walk-in', 'session/open', '/seat', '我的预约', 'alipay', 'payUnify']) {
@@ -315,6 +326,9 @@ test('customer pages stay on the existing hotpot reads and do not list reservati
   assert.match(reserve, /onLoad\(/)
   assert.match(reserve, /option\.shopId/)
   assert.match(reserve, /queryShopId/)
+  assert.match(reserve, /shopIdFromAddress/)
+  assert.match(reserve, /hashchange/)
+  assert.match(reserve, /loadSlots/)
   assert.match(reserve, /迟到不会自动取消/)
   const scan = source('pages-hotpot/scan/scan.vue')
   const bill = source('pages-hotpot/bill/bill.vue')
@@ -326,6 +340,9 @@ test('customer pages stay on the existing hotpot reads and do not list reservati
   assert.equal(scan.includes('session/open'), false)
   assert.equal(scan.includes('/hotpot/seat'), false)
   assert.equal(scan.includes('hotpotDish'), true)
+  assert.match(scan, /shopIdFromAddress/)
+  assert.match(scan, /hashchange/)
+  assert.match(scan, /applyScan/)
   const applyScan = scan.slice(scan.indexOf('const applyScan'), scan.indexOf('const scanCode'))
   assert.equal(applyScan.includes('hotpotDish'), false)
   assert.equal(applyScan.includes('hotpotScan'), true)
@@ -340,6 +357,11 @@ test('customer pages stay on the existing hotpot reads and do not list reservati
   assert.equal(bill.includes('priceFen *'), false)
   assert.equal(bill.includes('reduce('), false)
   assert.match(bill, /payableFen/)
+  assert.match(bill, /feesWaived/)
+  assert.match(bill, /锅底费已免除/)
+  assert.match(bill, /shopIdFromAddress/)
+  assert.match(bill, /hashchange/)
+  assert.match(bill, /loadBill/)
   assert.match(bill, /收款渠道未接通/)
   assert.match(bill, /bill\.dishes/)
   assert.match(bill, /已上桌/)

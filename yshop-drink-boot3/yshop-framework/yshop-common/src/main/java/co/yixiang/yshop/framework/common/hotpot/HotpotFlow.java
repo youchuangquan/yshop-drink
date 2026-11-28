@@ -27,7 +27,8 @@ import static co.yixiang.yshop.framework.common.exception.util.ServiceExceptionU
  * 顾客看桌或扫码不占桌。顾客占桌只发生在第一道菜下单时。店员可以把预约安排到空桌并开出台次。
  * 时段起止只给店员看是否已过点，这里不比较时钟，也不因此取消预约或释放容量。
  * 上菜和未上桌退菜只改菜品行上的份数，不改原始 quantity。请求键只记住这一次尝试，不另记一份数量。
- * 每一行都退完时免除锅底费；没有陪客费。应付因此变成 0 就沿用应付为 0 的释放，不算支付成功。
+ * 每一行都退完时免除锅底费，并跳过开台对象上的陪客费快照。快照默认是 0，这一轮不配置按人费用，也不落库。
+ * 应付因此变成 0 就沿用应付为 0 的释放，不算支付成功。
  */
 public final class HotpotFlow {
 
@@ -145,8 +146,13 @@ public final class HotpotFlow {
         public int payableFen;
         public boolean paid;
         public boolean zeroPayReleased;
-        /** 免除锅底费。不删除锅底行。没有陪客费时，这一项不再另计。 */
+        /** 免除锅底费和陪客费快照。不删除锅底行。 */
         public boolean feesWaived;
+        /**
+         * 陪客费快照，分。只在这台的内存对象上，默认 0。
+         * 这一轮没有按人配置，也不写入表或 DO。免除费用时和锅底一起不计。不要在这里编金额。
+         */
+        public int companionFeeFen;
         public SessionStatus status;
         public String requestKey;
         public final List<SessionPot> pots = new ArrayList<>();
@@ -262,12 +268,16 @@ public final class HotpotFlow {
     /**
      * 绑定顾客自己的账单。应付、明细、状态和版本都来自这一次开台，不在这里另编。
      * 没有顾客号，也没有让调用方填写的实付金额。
+     * paid 只反映这一台是否已付。应付为 0 的释放不是已付。
      */
     public static final class BoundBill {
         private final long sessionId;
         private final int version;
         private final int payableFen;
         private final String status;
+        private final boolean paid;
+        private final boolean zeroPayReleased;
+        private final boolean feesWaived;
         private final List<SessionPot> pots;
         private final List<SessionDish> dishes;
 
@@ -276,6 +286,9 @@ public final class HotpotFlow {
             this.version = session.version;
             this.payableFen = session.payableFen;
             this.status = session.status.name();
+            this.paid = session.paid;
+            this.zeroPayReleased = session.zeroPayReleased;
+            this.feesWaived = session.feesWaived;
             this.pots = List.copyOf(session.pots);
             this.dishes = List.copyOf(session.dishes);
         }
@@ -294,6 +307,18 @@ public final class HotpotFlow {
 
         public String status() {
             return status;
+        }
+
+        public boolean paid() {
+            return paid;
+        }
+
+        public boolean zeroPayReleased() {
+            return zeroPayReleased;
+        }
+
+        public boolean feesWaived() {
+            return feesWaived;
         }
 
         public List<SessionPot> pots() {
@@ -745,7 +770,7 @@ public final class HotpotFlow {
 
     /**
      * 店员退还未上桌的份数。已上桌的不能退。顾客不能退。
-     * 每一行都退完时免除锅底费，锅底行留着。没有陪客费，所以这一项不做别的事。
+     * 每一行都退完时免除锅底费和陪客费快照，锅底行留着。快照仍留在对象上，只是不再计入应付。
      * 免除之后应付变为 0，就在这一次里按应付为 0 释放桌台。paid 仍是 false，也不走收款。
      */
     public static Settlement refund(Board board, long shopId, long sessionId, int version, boolean staff, String rawKey,
@@ -777,14 +802,23 @@ public final class HotpotFlow {
     }
 
     /**
-     * 顾客结账只认 sessionId 和 version。应付为 0 时释放开台时钉住的时段，这不是支付成功。
+     * 顾客结账只认 sessionId 和 version，仍要求开台属于本人。
+     * 店员结账认登录门店和这台的 shopId，可以结本店顾客的台。不看请求里的门店号。
+     * 应付为 0 时释放开台时钉住的时段，这不是支付成功。
      * 应付大于 0 时，没有接通的渠道直接失败，不改已付、不释放。
      */
     public static Settlement beginSettlement(Board board, long actorUid, long sessionId, int version, boolean staff) {
+        return beginSettlement(board, actorUid, sessionId, version, staff, null);
+    }
+
+    public static Settlement beginSettlement(Board board, long actorUid, long sessionId, int version, boolean staff,
+                                             Long staffShopId) {
         if (sessionId <= 0) {
             throw exception(BAD_REQUEST);
         }
-        Session session = requireOwn(board, sessionId, actorUid, staff);
+        Session session = staff
+                ? requireThisShop(board, sessionId, staffShopId)
+                : requireOwn(board, sessionId, actorUid, false);
         if (session.version != version) {
             throw exception(BAD_REQUEST);
         }
@@ -853,7 +887,10 @@ public final class HotpotFlow {
     }
 
     /**
-     * 绑定顾客查看自己的开台账单。对不上就失败，响应里不带身份。
+     * 顾客按桌码看自己的账单。桌台当前钉着的进行中台次若属于本人，就返回这一次。
+     * 否则返回这张桌、这家店、这个顾客最近的一次进行中或已释放台次。最近按台次 id，不另加列。
+     * 别人正在用这张桌时，不进入别人的台次。对不上就失败，响应里不带身份。
+     * 扫码和开桌仍只认桌台当前绑定，不从这里找回已释放的台次。
      */
     public static BoundBill boundBill(Board board, long shopId, String signCode, long callerUid) {
         shopId = ShopAccess.requirePositiveShopId(shopId);
@@ -864,12 +901,34 @@ public final class HotpotFlow {
             throw exception(BAD_REQUEST);
         }
         Table table = findTable(board, shopId, signCode.trim());
-        Session session = table == null || table.sessionId == null ? null : board.sessions.get(table.sessionId);
-        if (table == null || table.boundUid == null || table.boundUid != callerUid || session == null
-                || session.shopId != shopId || session.status != SessionStatus.OPEN || session.ownerUid != callerUid) {
+        if (table == null) {
             throw exception(NOT_FOUND);
         }
-        return new BoundBill(session);
+        Session pinned = table.sessionId == null ? null : board.sessions.get(table.sessionId);
+        if (belongsOnTable(pinned, shopId, table.id, callerUid) && pinned.status == SessionStatus.OPEN) {
+            return new BoundBill(pinned);
+        }
+        Session latest = null;
+        for (Session session : board.sessions.values()) {
+            if (!belongsOnTable(session, shopId, table.id, callerUid)) {
+                continue;
+            }
+            if (session.status != SessionStatus.OPEN && session.status != SessionStatus.RELEASED) {
+                continue;
+            }
+            if (latest == null || session.id > latest.id) {
+                latest = session;
+            }
+        }
+        if (latest == null) {
+            throw exception(NOT_FOUND);
+        }
+        return new BoundBill(latest);
+    }
+
+    private static boolean belongsOnTable(Session session, long shopId, long tableId, long callerUid) {
+        return session != null && session.shopId == shopId && session.tableId != null && session.tableId == tableId
+                && session.ownerUid == callerUid;
     }
 
     /**
@@ -1261,6 +1320,22 @@ public final class HotpotFlow {
         return session;
     }
 
+    /**
+     * 店员只能结登录门店里的台。台不存在是 404。存在但不是这家店是 403。
+     * staffShopId 必须是登录态上的门店，不能用请求体里的门店号。
+     */
+    private static Session requireThisShop(Board board, long sessionId, Long staffShopId) {
+        Session session = board.sessions.get(sessionId);
+        if (session == null) {
+            throw exception(NOT_FOUND);
+        }
+        if (staffShopId == null || staffShopId <= 0) {
+            throw exception(FORBIDDEN);
+        }
+        ShopAccess.assertSameShop(session.shopId, staffShopId);
+        return session;
+    }
+
     private static Pot resolvePot(Board board, long shopId, long potId) {
         boolean anyForShop = false;
         Pot matched = null;
@@ -1310,7 +1385,10 @@ public final class HotpotFlow {
             for (SessionPot line : session.pots) {
                 sum += line.priceFen;
             }
-            // 没有按人的陪客费。免除费用时锅底不再计入，陪客费这一项仍然是 0。
+            if (session.companionFeeFen < 0) {
+                throw exception(BAD_REQUEST);
+            }
+            sum += session.companionFeeFen;
         }
         for (SessionDish line : session.dishes) {
             if (line.servedQty < 0 || line.refundedQty < 0

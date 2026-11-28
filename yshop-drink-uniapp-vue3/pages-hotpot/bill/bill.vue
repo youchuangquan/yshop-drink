@@ -70,13 +70,15 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, getCurrentInstance, onMounted, onUnmounted, ref, watch } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
 import { storeToRefs } from 'pinia'
 import { useMainStore } from '@/store/store'
 import { hotpotBill, hotpotSettle } from '@/api/hotpot'
 import {
   shopReady,
+  shopIdFromAddress,
+  signCodeFromAddress,
   checkoutBody,
   canSettle,
   BILL_CHECKOUT_GAP,
@@ -90,6 +92,9 @@ import {
 
 const main = useMainStore()
 const { isLogin, store } = storeToRefs(main)
+const pageInstance = getCurrentInstance()
+const pageProxy = pageInstance ? pageInstance.proxy : null
+let stopRouteWatch = null
 const queryShopId = ref('')
 const signCode = ref('')
 const bill = ref(null)
@@ -190,6 +195,74 @@ const startCheckout = async () => {
     checking.value = false
   }
 }
+
+function readAddressQuery() {
+  const locatedShop = typeof window === 'undefined' ? '' : shopIdFromAddress(window.location)
+  const locatedCode = typeof window === 'undefined' ? '' : signCodeFromAddress(window.location)
+  const routeQuery = pageProxy && pageProxy.$route && pageProxy.$route.query ? pageProxy.$route.query : null
+  const routeShop = routeQuery && shopReady(routeQuery.shopId) ? routeQuery.shopId : ''
+  const routeCode = routeQuery && typeof routeQuery.signCode === 'string' ? routeQuery.signCode : ''
+  return {
+    shopId: locatedShop || routeShop,
+    signCode: locatedCode || routeCode,
+  }
+}
+
+function syncAddressQuery() {
+  const incoming = readAddressQuery()
+  const codeChanged = Boolean(incoming.signCode) && incoming.signCode !== signCode.value
+  if (codeChanged) {
+    signCode.value = incoming.signCode
+  }
+  const shopChanged = shopReady(incoming.shopId) && String(queryShopId.value) !== String(incoming.shopId)
+  if (shopChanged) {
+    queryShopId.value = incoming.shopId
+    return
+  }
+  if (codeChanged && isLogin.value && shopReady(shopId.value) && signCode.value.trim()) {
+    loadBill()
+  }
+}
+
+watch(shopId, (next, prev) => {
+  if (!shopReady(prev) || String(next) === String(prev)) {
+    return
+  }
+  bill.value = null
+  settlement.value = null
+  checkoutFailed.value = false
+  failureText.value = ''
+  loadedCode.value = ''
+  loadState.value = 'idle'
+  if (isLogin.value && signCode.value.trim() && shopReady(next)) {
+    loadBill()
+  }
+})
+
+onMounted(() => {
+  if (pageProxy && pageProxy.$route) {
+    stopRouteWatch = watch(() => {
+      const query = pageProxy.$route.query || {}
+      return `${query.shopId || ''}|${query.signCode || ''}`
+    }, () => syncAddressQuery())
+  }
+  if (typeof window !== 'undefined') {
+    window.addEventListener('hashchange', syncAddressQuery)
+    window.addEventListener('popstate', syncAddressQuery)
+  }
+  syncAddressQuery()
+})
+
+onUnmounted(() => {
+  if (stopRouteWatch) {
+    stopRouteWatch()
+  }
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.removeEventListener('hashchange', syncAddressQuery)
+  window.removeEventListener('popstate', syncAddressQuery)
+})
 
 onLoad((option) => {
   if (option && shopReady(option.shopId)) {

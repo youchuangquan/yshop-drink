@@ -62,13 +62,14 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, getCurrentInstance, onMounted, onUnmounted, ref, watch } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
 import { storeToRefs } from 'pinia'
 import { useMainStore } from '@/store/store'
 import { createRequestKey } from '@/utils/request-key'
 import {
   shopReady,
+  shopIdFromAddress,
   visibleSlots,
   remainingCapacity,
   canReserve,
@@ -83,6 +84,9 @@ import { hotpotSlots, hotpotReserve, hotpotCancel } from '@/api/hotpot'
 
 const main = useMainStore()
 const { isLogin, store } = storeToRefs(main)
+const pageInstance = getCurrentInstance()
+const pageProxy = pageInstance ? pageInstance.proxy : null
+let stopRouteWatch = null
 const queryShopId = ref('')
 const shopId = computed(() => {
   if (shopReady(queryShopId.value)) return queryShopId.value
@@ -208,9 +212,54 @@ const cancelHold = async () => {
   }
 }
 
-watch(shopId, () => {
+function readAddressShop() {
+  const located = typeof window === 'undefined' ? '' : shopIdFromAddress(window.location)
+  if (shopReady(located)) {
+    return located
+  }
+  const routeShop = pageProxy && pageProxy.$route && pageProxy.$route.query ? pageProxy.$route.query.shopId : ''
+  return shopReady(routeShop) ? routeShop : ''
+}
+
+function syncAddressShop() {
+  const next = readAddressShop()
+  if (!shopReady(next) || String(queryShopId.value) === String(next)) {
+    return
+  }
+  queryShopId.value = next
+}
+
+watch(shopId, (next, prev) => {
+  if (String(next) === String(prev)) {
+    return
+  }
   hold.value = null
   pending = null
+  if (shopReady(prev)) {
+    loadSlots()
+  }
+})
+
+onMounted(() => {
+  if (pageProxy && pageProxy.$route) {
+    stopRouteWatch = watch(() => (pageProxy.$route.query ? pageProxy.$route.query.shopId : ''), () => syncAddressShop())
+  }
+  if (typeof window !== 'undefined') {
+    window.addEventListener('hashchange', syncAddressShop)
+    window.addEventListener('popstate', syncAddressShop)
+  }
+  syncAddressShop()
+})
+
+onUnmounted(() => {
+  if (stopRouteWatch) {
+    stopRouteWatch()
+  }
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.removeEventListener('hashchange', syncAddressShop)
+  window.removeEventListener('popstate', syncAddressShop)
 })
 
 onLoad((option) => {

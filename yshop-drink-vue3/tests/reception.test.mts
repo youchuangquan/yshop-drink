@@ -21,7 +21,10 @@ import {
   openBody,
   openScope,
   partitionByShop,
+  acceptZeroRelease,
   presentOpenSessions,
+  settleBlockReason,
+  settleBody,
   releaseRequestKey,
   reservationSeatBlockReason,
   reservationSeatBody,
@@ -289,6 +292,7 @@ const openSession = (patch: Partial<OpenSessionView> = {}): OpenSessionView => (
   payableFen: 7200,
   feesWaived: false,
   status: 'OPEN',
+  pots: [],
   dishes: [dish()],
   ...patch
 })
@@ -304,6 +308,7 @@ test('in-progress sessions keep this shop and the line quantities', () => {
         payableFen: 7200,
         feesWaived: false,
         status: 'OPEN',
+        pots: [{ potId: 4, name: '红锅', priceFen: 3577 }],
         dishes: [
           {
             lineId: 5,
@@ -326,6 +331,9 @@ test('in-progress sessions keep this shop and the line quantities', () => {
   assert.equal(rows.ignored, 3)
   assert.equal(rows.visible[0].signCode, 'A1')
   assert.equal(rows.visible[0].feesWaived, false)
+  assert.equal(rows.visible[0].pots.length, 1)
+  assert.equal(rows.visible[0].pots[0].name, '红锅')
+  assert.equal(rows.visible[0].pots[0].priceFen, 3577)
   assert.equal(rows.visible[0].dishes[0].quantity, 4)
   assert.equal(rows.visible[0].dishes[0].servedQty, 1)
   assert.equal(rows.visible[0].dishes[0].refundableQty, 3)
@@ -404,7 +412,80 @@ test('serve and refund bodies stay on the line and do not carry a shop or a paym
   )
 })
 
-test('the reception page registers lines and does not settle', () => {
+test('pot lines stay on the open session and only a zero bill can be released', () => {
+  const kept = presentOpenSessions(
+    [
+      {
+        sessionId: 20,
+        shopId: shop,
+        signCode: 'A1',
+        version: 3,
+        payableFen: 0,
+        status: 'OPEN',
+        pots: [
+          { potId: 4, name: '红锅', priceFen: 3577 },
+          { name: '清汤' },
+          {}
+        ],
+        dishes: []
+      }
+    ],
+    shop
+  )
+  assert.equal(kept.visible.length, 1)
+  assert.equal(kept.visible[0].pots.length, 2)
+  assert.equal(kept.visible[0].pots[0].priceFen, 3577)
+  assert.equal(kept.visible[0].pots[1].name, '清汤')
+  assert.equal(kept.visible[0].pots[1].priceFen, null)
+
+  const zero = openSession({ payableFen: 0, pots: [{ potId: 4, name: '红锅', priceFen: 3577 }] })
+  assert.equal(settleBlockReason(shop, zero), null)
+  assert.equal(settleBlockReason(shop, openSession({ payableFen: 1800 })), '应付不是 0，不能结清放桌')
+  assert.equal(settleBlockReason(shop, openSession({ payableFen: null })), '应付不是 0，不能结清放桌')
+  const body = settleBody(zero, shop)
+  assert.deepEqual(Object.keys(body), ['sessionId', 'version'])
+  assert.deepEqual(body, { sessionId: 20, version: 3 })
+  assert.equal('shopId' in body, false)
+  assert.equal('paidFen' in body, false)
+  assert.throws(() => settleBody(openSession({ payableFen: 1 }), shop))
+
+  const released = acceptZeroRelease(
+    {
+      sessionId: 20,
+      shopId: shop,
+      payableFen: 0,
+      paid: false,
+      paymentSuccess: false,
+      zeroPayReleased: true,
+      disposition: 'ZERO_PAY'
+    },
+    shop,
+    20
+  )
+  assert.equal(released.ok, true)
+  if (released.ok) {
+    assert.equal(released.paid, false)
+    assert.equal(released.released, true)
+  }
+  assert.equal(
+    acceptZeroRelease(
+      { sessionId: 20, shopId: shop, paid: true, paymentSuccess: true, zeroPayReleased: true, disposition: 'ZERO_PAY' },
+      shop,
+      20
+    ).ok,
+    false
+  )
+  assert.equal(
+    acceptZeroRelease(
+      { sessionId: 20, shopId: shop, paid: false, paymentSuccess: false, zeroPayReleased: false, payableFen: 1800 },
+      shop,
+      20
+    ).ok,
+    false
+  )
+})
+
+test('the reception page shows pots and releases only a zero payable', () => {
   const page = readFileSync(
     new URL('../src/views/mall/store/hotpot/reception/index.vue', import.meta.url),
     'utf8'
@@ -414,10 +495,16 @@ test('the reception page registers lines and does not settle', () => {
   assert.match(page, /本店没有进行中的桌次/)
   assert.match(page, /serveDishes/)
   assert.match(page, /refundDishes/)
-  assert.equal(page.includes('/session/settle'), false)
-  assert.equal(page.includes('settle'), false)
+  assert.match(page, /session\.pots/)
+  assert.match(page, /结清放桌/)
+  assert.match(page, /payableFen === 0/)
+  assert.match(page, /settleOpenSession/)
+  assert.match(page, /这不是支付成功/)
+  assert.equal(page.includes('微信支付'), false)
+  assert.equal(page.includes('支付宝'), false)
+  assert.equal(page.includes('人工清台'), false)
   assert.match(api, /\/store\/hotpot\/session'/)
   assert.match(api, /\/store\/hotpot\/session\/serve/)
   assert.match(api, /\/store\/hotpot\/session\/refund/)
-  assert.equal(api.includes('/session/settle'), false)
+  assert.match(api, /\/store\/hotpot\/session\/settle/)
 })

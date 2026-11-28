@@ -11,6 +11,7 @@ import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotSessionResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotSlotResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotStaffHoldResp;
 import co.yixiang.yshop.module.store.controller.app.hotpot.vo.HotpotTableResp;
+import co.yixiang.yshop.module.store.dal.dataobject.hotpot.HotpotSessionDO;
 import co.yixiang.yshop.module.store.service.hotpot.HotpotService;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -80,8 +81,10 @@ class HotpotApiShapeTest {
         assertEquals(List.of("slotId", "shopId", "capacity", "occupied", "startTime", "endTime"),
                 names(HotpotSlotResp.class));
         assertEquals(List.of("id", "slotId", "shopId", "uid", "status", "sessionId"), names(HotpotStaffHoldResp.class));
-        assertEquals(List.of("sessionId", "version", "payableFen", "status", "pots", "dishes"),
+        assertEquals(List.of("sessionId", "version", "payableFen", "status", "paid", "zeroPayReleased",
+                "feesWaived", "pots", "dishes"),
                 names(HotpotBoundBillResp.class));
+        assertFalse(names(HotpotSessionDO.class).stream().anyMatch(name -> name.toLowerCase().contains("companion")));
         assertEquals(List.of("holdId", "slotId", "signCode", "requestKey"),
                 names(AdminHotpotCommands.ReservationSeat.class));
         assertEquals(List.of("shopId", "slotId", "signCode", "productId", "quantity", "version", "requestKey"),

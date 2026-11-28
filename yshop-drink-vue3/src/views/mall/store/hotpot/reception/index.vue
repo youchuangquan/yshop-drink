@@ -163,7 +163,7 @@
       type="info"
       :closable="false"
       show-icon
-      title="登记已上桌的份数，或退还没上桌的份数。下单份数不会改小。已上桌的不能退。这里不结账，也不收款。"
+      title="登记已上桌的份数，或退还没上桌的份数。下单份数不会改小。已上桌的不能退。应付为 0 时可以结清放桌，那不是支付成功。应付大于 0 时不结清，也不收款。"
     />
     <el-alert
       v-if="ignoredSessions > 0"
@@ -180,6 +180,29 @@
         {{ session.version }} · 应付 {{ session.payableFen == null ? '未返回' : `${session.payableFen} 分` }}
       </div>
       <div v-if="session.feesWaived" class="mt-10px">锅底费已免除。锅底仍留在这桌，不计应付。</div>
+      <div class="mt-10px">
+        <el-button
+          v-if="session.payableFen === 0"
+          type="primary"
+          :disabled="settleBlocked(session)"
+          :loading="settlingId === session.sessionId"
+          v-hasPermi="['store:shop:update']"
+          @click="releaseZero(session)"
+        >
+          结清放桌
+        </el-button>
+        <span v-else-if="session.payableFen != null && session.payableFen > 0">应付大于 0。这里不结清，也不把账单标成已付。</span>
+        <span v-else>应付未返回，不能结清放桌。</span>
+      </div>
+      <div v-if="session.pots.length === 0" class="mt-10px">这桌没有锅底行。</div>
+      <el-table v-else :data="session.pots" class="mt-10px">
+        <el-table-column label="锅底" align="center" prop="name" min-width="120" />
+        <el-table-column label="标价" align="center" min-width="120">
+          <template #default="scope">
+            {{ scope.row.priceFen == null ? '未返回' : `${scope.row.priceFen} 分` }}
+          </template>
+        </el-table-column>
+      </el-table>
       <div v-if="session.dishes.length === 0" class="mt-10px">这桌没有菜品行。</div>
       <el-table v-else v-loading="loading" :data="session.dishes" class="mt-10px">
         <el-table-column label="菜品" align="center" prop="name" min-width="120" />
@@ -254,6 +277,7 @@ import {
   acceptOpen,
   acceptReservationSeat,
   acceptSeat,
+  acceptZeroRelease,
   boundShopId,
   canAssignTable,
   canSeat,
@@ -275,6 +299,8 @@ import {
   reservationSeatBody,
   reservationSeatScope,
   seatBody,
+  settleBlockReason,
+  settleBody,
   seatScope,
   slotClockText,
   stableRequestKey,
@@ -306,6 +332,7 @@ const ignoredSessions = ref(0)
 const slotId = ref<number | undefined>(undefined)
 const signCode = ref<string | undefined>(undefined)
 const pendingLine = ref<string | null>(null)
+const settlingId = ref<number | null>(null)
 const drafts = ref<Record<string, number>>({})
 const requestKeys = new Map<string, string>()
 const inflightKeys = new Set<string>()
@@ -637,6 +664,42 @@ const submitLine = async (action: 'serve' | 'refund', session: OpenSessionView, 
       releaseRequestKey(inflightKeys, requestKey)
     }
     pendingLine.value = null
+  }
+}
+
+const settleBlocked = (session: OpenSessionView) => {
+  return settlingId.value != null || settleBlockReason(shopId.value, session) != null
+}
+
+const releaseZero = async (session: OpenSessionView) => {
+  const currentShop = shopId.value
+  if (currentShop == null || settlingId.value != null || pendingLine.value != null) {
+    return
+  }
+  if (settleBlockReason(currentShop, session)) {
+    return
+  }
+  settlingId.value = session.sessionId
+  try {
+    await message.confirm('确认结清放桌？只在应付为 0 时释放桌次。这一步不收款，也不会把账单标成已付。')
+  } catch {
+    settlingId.value = null
+    return
+  }
+  try {
+    const result = await HotpotApi.settleOpenSession(settleBody(session, currentShop))
+    const accepted = acceptZeroRelease(result, currentShop, session.sessionId)
+    if (!accepted.ok) {
+      message.error(accepted.reason)
+      await reload()
+      return
+    }
+    message.success('应付为 0，桌次已释放。这不是支付成功。')
+    await reload()
+  } catch {
+    // 失败时不把桌次标成已付。
+  } finally {
+    settlingId.value = null
   }
 }
 

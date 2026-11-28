@@ -154,6 +154,9 @@ public class HotpotServiceImpl implements HotpotService {
         resp.setVersion(bill.version());
         resp.setPayableFen(bill.payableFen());
         resp.setStatus(bill.status());
+        resp.setPaid(bill.paid());
+        resp.setZeroPayReleased(bill.zeroPayReleased());
+        resp.setFeesWaived(bill.feesWaived());
         List<HotpotBoundBillResp.PotLine> pots = new ArrayList<>();
         for (HotpotFlow.SessionPot pot : bill.pots()) {
             HotpotBoundBillResp.PotLine line = new HotpotBoundBillResp.PotLine();
@@ -387,7 +390,8 @@ public class HotpotServiceImpl implements HotpotService {
                 throw exception(FORBIDDEN);
             }
             HotpotFlow.Board board = load(row.getShopId());
-            HotpotFlow.Settlement settlement = HotpotFlow.beginSettlement(board, actorUid, sessionId, version, staff);
+            HotpotFlow.Settlement settlement = HotpotFlow.beginSettlement(board, actorUid, sessionId, version, staff,
+                    staff ? staffShop : null);
             save(board);
             return toSession(settlement.session, settlement.paymentSuccess, settlement.disposition);
         });

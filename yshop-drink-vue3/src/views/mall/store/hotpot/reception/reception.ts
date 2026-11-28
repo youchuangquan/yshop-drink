@@ -4,7 +4,7 @@
  * POST /store/hotpot/seat 只把 HELD 改成 SEATED，不分配桌台，也不开桌次。
  * 预约安排到空桌走 POST /store/hotpot/reservation/seat。
  * 顾客编号为 0 的散客仍走 POST /store/hotpot/session/open。
- * 进行中桌次只登记上菜和退还未上桌的份数，不结账。
+ * 进行中桌次登记上菜和退还未上桌的份数。应付为 0 才能结清放桌，那不是支付成功。应付大于 0 不结清，也不收款。
  * 时段结束时刻已过时只在本页提醒，不取消，也不释放名额。
  */
 
@@ -364,6 +364,7 @@ export interface SessionResult {
   zeroPayReleased?: boolean
   feesWaived?: boolean
   paymentSuccess?: boolean | null
+  disposition?: string | null
 }
 
 export function acceptOpen(result: SessionResult | null | undefined, shopId: number, slotId: number) {
@@ -436,6 +437,12 @@ export interface DishLineView {
   refundableQty: number
 }
 
+export interface PotLineView {
+  potId: number | null
+  name: string
+  priceFen: number | null
+}
+
 export interface OpenSessionView {
   sessionId: number
   shopId: number
@@ -444,7 +451,13 @@ export interface OpenSessionView {
   payableFen: number | null
   feesWaived: boolean
   status: string
+  pots: PotLineView[]
   dishes: DishLineView[]
+}
+
+export interface SettleBody {
+  sessionId: number
+  version: number
 }
 
 export interface LineCommandBody {
@@ -464,6 +477,12 @@ interface RawDish {
   refundableQty?: unknown
 }
 
+interface RawPot {
+  potId?: unknown
+  name?: unknown
+  priceFen?: unknown
+}
+
 interface RawSession {
   sessionId?: unknown
   shopId?: unknown
@@ -474,6 +493,7 @@ interface RawSession {
   status?: unknown
   paid?: unknown
   zeroPayReleased?: unknown
+  pots?: unknown
   dishes?: unknown
 }
 
@@ -547,6 +567,58 @@ export function lineCommandBody(
   }
 }
 
+export function settleBlockReason(
+  shopId: number | null,
+  session: OpenSessionView | null | undefined
+): string | null {
+  if (shopId == null) {
+    return '当前账号没有绑定门店'
+  }
+  if (!session || session.shopId !== shopId || !positive(session.sessionId)) {
+    return '请选择本店桌次'
+  }
+  if (!nonNegative(session.version)) {
+    return '桌次版本不完整'
+  }
+  if (session.status !== 'OPEN') {
+    return '桌次不在进行中'
+  }
+  if (session.payableFen !== 0) {
+    return '应付不是 0，不能结清放桌'
+  }
+  return null
+}
+
+export function settleBody(session: OpenSessionView, shopId: number): SettleBody {
+  if (settleBlockReason(shopId, session)) {
+    throw new Error('settle rejected')
+  }
+  return {
+    sessionId: session.sessionId,
+    version: session.version
+  }
+}
+
+export function acceptZeroRelease(
+  result: SessionResult | null | undefined,
+  shopId: number,
+  sessionId: number
+) {
+  if (!result || result.shopId !== shopId || result.sessionId !== sessionId) {
+    return { ok: false as const, reason: '结清结果与本店桌次不一致' }
+  }
+  if (result.paid === true || result.paymentSuccess === true) {
+    return { ok: false as const, reason: '结清结果带了已支付标记，本页不会把它当成已付款' }
+  }
+  if (result.zeroPayReleased !== true || result.disposition !== 'ZERO_PAY') {
+    return { ok: false as const, reason: '这不是应付为 0 的释放，账单未支付' }
+  }
+  if (result.payableFen != null && result.payableFen !== 0) {
+    return { ok: false as const, reason: '应付不是 0，不能结清放桌' }
+  }
+  return { ok: true as const, released: true, paid: false as const }
+}
+
 export function lineCommandScope(
   action: 'serve' | 'refund',
   sessionId: number,
@@ -598,6 +670,15 @@ function presentOpenSession(row: RawSession | null | undefined, shopId: number):
       }
     }
   }
+  const pots: PotLineView[] = []
+  if (Array.isArray(row.pots)) {
+    for (const item of row.pots as RawPot[]) {
+      const line = presentPotLine(item)
+      if (line) {
+        pots.push(line)
+      }
+    }
+  }
   return {
     sessionId: row.sessionId,
     shopId,
@@ -606,7 +687,25 @@ function presentOpenSession(row: RawSession | null | undefined, shopId: number):
     payableFen: nonNegative(row.payableFen) ? row.payableFen : null,
     feesWaived: row.feesWaived === true,
     status: 'OPEN',
+    pots,
     dishes
+  }
+}
+
+function presentPotLine(row: RawPot | null | undefined): PotLineView | null {
+  if (!row || typeof row !== 'object') {
+    return null
+  }
+  const potId = positive(row.potId) ? row.potId : null
+  const name = typeof row.name === 'string' ? row.name.trim() : ''
+  const priceFen = nonNegative(row.priceFen) ? row.priceFen : null
+  if (potId == null && name === '' && priceFen == null) {
+    return null
+  }
+  return {
+    potId,
+    name: name || '未命名锅底',
+    priceFen
   }
 }
 

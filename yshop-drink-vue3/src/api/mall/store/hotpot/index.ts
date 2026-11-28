@@ -36,6 +36,12 @@ export interface HotpotSeatResultVO {
   lateAutoCancels?: boolean
 }
 
+export interface HotpotPotLineVO {
+  potId?: number | null
+  name?: string
+  priceFen?: number | null
+}
+
 export interface HotpotDishLineVO {
   lineId: number
   productId?: number
@@ -62,6 +68,7 @@ export interface HotpotSessionResultVO {
   signCode?: string | null
   paymentSuccess?: boolean | null
   disposition?: string | null
+  pots?: HotpotPotLineVO[]
   dishes?: HotpotDishLineVO[]
 }
 
@@ -89,6 +96,11 @@ export interface HotpotLineCommandReq {
   version: number
   requestKey: string
   items: { lineId: number; quantity: number }[]
+}
+
+export interface HotpotSettleReq {
+  sessionId: number
+  version: number
 }
 
 export const listSlots = async () => {
@@ -125,4 +137,8 @@ export const serveDishes = async (data: HotpotLineCommandReq) => {
 
 export const refundDishes = async (data: HotpotLineCommandReq) => {
   return await request.post<HotpotSessionResultVO>({ url: '/store/hotpot/session/refund', data })
+}
+
+export const settleOpenSession = async (data: HotpotSettleReq) => {
+  return await request.post<HotpotSessionResultVO>({ url: '/store/hotpot/session/settle', data })
 }
