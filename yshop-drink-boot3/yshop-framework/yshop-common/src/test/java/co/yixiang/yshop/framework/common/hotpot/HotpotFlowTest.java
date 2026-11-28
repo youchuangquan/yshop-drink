@@ -9,6 +9,7 @@ import java.util.List;
 
 import static co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.BAD_REQUEST;
 import static co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.FORBIDDEN;
+import static co.yixiang.yshop.framework.common.exception.enums.GlobalErrorCodeConstants.NOT_FOUND;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -21,6 +22,7 @@ class HotpotFlowTest {
     private static final long OTHER_SHOP = 2L;
     private static final long GUEST = 42L;
     private static final long OTHER_GUEST = 99L;
+    private static final long STAFF = 7L;
     private static final long BEEF = 501L;
     private static final long TOFU = 502L;
     private static final int POT_FEN = 3577;
@@ -239,6 +241,78 @@ class HotpotFlowTest {
         assertFalse(replay.paymentSuccess);
         assertEquals(0, pinned.occupied);
         assertEquals(3, other.occupied);
+    }
+
+    @Test
+    void staffSettlesACustomerOwnedZeroBillInThisShop() {
+        HotpotFlow.Board board = board();
+        HotpotFlow.Slot slot = slot(board, SHOP, 1, "stf-slot-zero");
+        HotpotFlow.Table table = table(board, SHOP, "Z1", "stf-table-zero");
+        HotpotFlow.reserve(board, SHOP, slot.id, GUEST, "stf-hold-zero");
+        HotpotFlow.Session session = HotpotFlow.open(board, SHOP, slot.id, "Z1", GUEST, false, "stf-hold-zero");
+        assertEquals(GUEST, session.ownerUid);
+        assertEquals(0, session.payableFen);
+
+        ServiceException otherShop = assertThrows(ServiceException.class,
+                () -> HotpotFlow.beginSettlement(board, STAFF, session.id, session.version, true, OTHER_SHOP));
+        assertEquals(FORBIDDEN.getCode(), otherShop.getCode());
+        assertEquals(HotpotFlow.SessionStatus.OPEN, session.status);
+        assertFalse(session.paid);
+        assertFalse(session.zeroPayReleased);
+        assertEquals(1, slot.occupied);
+        assertTrue(table.occupied);
+
+        ServiceException noShop = assertThrows(ServiceException.class,
+                () -> HotpotFlow.beginSettlement(board, STAFF, session.id, session.version, true));
+        assertEquals(FORBIDDEN.getCode(), noShop.getCode());
+        assertEquals(HotpotFlow.SessionStatus.OPEN, session.status);
+        assertFalse(session.paid);
+
+        ServiceException stranger = assertThrows(ServiceException.class,
+                () -> HotpotFlow.beginSettlement(board, OTHER_GUEST, session.id, session.version, false));
+        assertEquals(FORBIDDEN.getCode(), stranger.getCode());
+        assertEquals(HotpotFlow.SessionStatus.OPEN, session.status);
+
+        ServiceException missing = assertThrows(ServiceException.class,
+                () -> HotpotFlow.beginSettlement(board, STAFF, 99999L, session.version, true, SHOP));
+        assertEquals(NOT_FOUND.getCode(), missing.getCode());
+
+        HotpotFlow.Settlement settlement = HotpotFlow.beginSettlement(board, STAFF, session.id, session.version, true, SHOP);
+        assertFalse(settlement.paymentSuccess);
+        assertTrue(settlement.zeroPayReleased);
+        assertEquals(HotpotFlow.DISPOSITION_ZERO_PAY, settlement.disposition);
+        assertFalse(session.paid);
+        assertEquals(HotpotFlow.SessionStatus.RELEASED, session.status);
+        assertEquals(0, slot.occupied);
+        assertFalse(table.occupied);
+
+        HotpotFlow.Settlement replay = HotpotFlow.beginSettlement(board, STAFF, session.id, session.version, true, SHOP);
+        assertFalse(replay.paymentSuccess);
+        assertTrue(replay.zeroPayReleased);
+        assertEquals(HotpotFlow.DISPOSITION_ZERO_PAY, replay.disposition);
+        assertFalse(session.paid);
+        assertEquals(0, slot.occupied);
+    }
+
+    @Test
+    void staffSettlementFailsClosedWhenPayableIsPositive() {
+        HotpotFlow.Board board = board();
+        HotpotFlow.Slot slot = slot(board, SHOP, 1, "stf-slot-pay");
+        HotpotFlow.reserve(board, SHOP, slot.id, GUEST, "stf-hold-pay");
+        HotpotFlow.Session session = HotpotFlow.open(board, SHOP, slot.id, null, GUEST, false, "stf-hold-pay");
+        HotpotFlow.Pot pot = HotpotFlow.addPotConfig(board, SHOP, "红锅", POT_FEN, STAFF, "stf-pot-pay");
+        HotpotFlow.addPot(board, SHOP, session.id, pot.id, session.version, GUEST, false, "stf-pot-add");
+        assertTrue(session.payableFen > 0);
+
+        ServiceException blocked = assertThrows(ServiceException.class,
+                () -> HotpotFlow.beginSettlement(board, STAFF, session.id, session.version, true, SHOP));
+        assertEquals(BAD_REQUEST.getCode(), blocked.getCode());
+        assertEquals("收款渠道未接通", blocked.getMessage());
+        assertFalse(session.paid);
+        assertFalse(session.zeroPayReleased);
+        assertEquals(HotpotFlow.SessionStatus.OPEN, session.status);
+        assertEquals(1, slot.occupied);
+        assertEquals(POT_FEN, session.payableFen);
     }
 
     @Test
@@ -487,9 +561,7 @@ class HotpotFlowTest {
         assertFalse(table.occupied);
         assertNull(table.boundUid);
         assertNull(table.sessionId);
-        for (Field field : HotpotFlow.Session.class.getDeclaredFields()) {
-            assertFalse(field.getName().toLowerCase().contains("companion"));
-        }
+        assertEquals(0, session.companionFeeFen);
 
         int version = session.version;
         int requests = board.requests.size();
@@ -509,6 +581,40 @@ class HotpotFlowTest {
         assertEquals(BAD_REQUEST.getCode(), again.getCode());
         assertEquals(0, beef.servedQty);
         assertEquals(0, slot.occupied);
+    }
+
+    @Test
+    void aPositiveCompanionSnapshotIsWaivedWhenEveryDishIsRefunded() {
+        HotpotFlow.Board board = board();
+        HotpotFlow.Slot slot = slot(board, SHOP, 1, "cmp-slot-zero");
+        HotpotFlow.Table table = table(board, SHOP, "Z2", "cmp-table-zero");
+        menu(board, SHOP, BEEF, "鲜牛肉", 1800);
+        HotpotFlow.Session session = HotpotFlow.orderDish(board, SHOP, slot.id, "Z2", GUEST, BEEF, 1, null,
+                "cmp-dish-zero");
+        assertEquals(0, session.companionFeeFen);
+        // 测试直接写下快照。这不是按人配置的陪客费，也不代表产品已经接受了那一项。
+        session.companionFeeFen = 640;
+        HotpotFlow.Pot pot = HotpotFlow.addPotConfig(board, SHOP, "红锅", POT_FEN, STAFF, "cmp-pot-zero");
+        HotpotFlow.addPot(board, SHOP, session.id, pot.id, session.version, GUEST, false, "cmp-pot-add");
+        assertEquals(1800 + POT_FEN + 640, session.payableFen);
+        assertFalse(session.feesWaived);
+        HotpotFlow.SessionDish line = session.dishes.get(0);
+
+        HotpotFlow.Settlement cleared = HotpotFlow.refund(board, SHOP, session.id, session.version, true,
+                "cmp-refund-all", List.of(new HotpotFlow.LineQty(line.id, 1)));
+        assertEquals(1, line.refundedQty);
+        assertEquals(0, line.servedQty);
+        assertTrue(session.feesWaived);
+        assertEquals(640, session.companionFeeFen);
+        assertEquals(POT_FEN, session.pots.get(0).priceFen);
+        assertEquals(0, session.payableFen);
+        assertFalse(session.paid);
+        assertFalse(cleared.paymentSuccess);
+        assertTrue(cleared.zeroPayReleased);
+        assertEquals(HotpotFlow.DISPOSITION_ZERO_PAY, cleared.disposition);
+        assertEquals(HotpotFlow.SessionStatus.RELEASED, session.status);
+        assertEquals(0, slot.occupied);
+        assertFalse(table.occupied);
     }
 
     @Test

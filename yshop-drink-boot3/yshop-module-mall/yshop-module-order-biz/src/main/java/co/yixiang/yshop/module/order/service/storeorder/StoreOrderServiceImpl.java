@@ -161,7 +161,8 @@ public class StoreOrderServiceImpl implements StoreOrderService {
         }
         storeOrderMapper.updateById(updateObj);
 
-        if(UpdateOrderEnum.ORDER_SEND.getValue().equals(updateReqVO.getUpdateType())){
+        // 外卖发货不改状态，也不再写一条「已发货」。出单只打印，不在这里记履约。
+        if(UpdateOrderEnum.ORDER_SEND.getValue().equals(updateReqVO.getUpdateType()) && !takeout){
             //增加状态
             storeOrderStatusService.create(updateObj.getUid(),updateObj.getId(), OrderLogEnum.DELIVERY_GOODS.getValue(),
                     "已发货 快递公司：" + updateObj.getDeliveryName() + "快递单号：" + updateObj.getDeliveryId());
@@ -180,17 +181,15 @@ public class StoreOrderServiceImpl implements StoreOrderService {
 //                        updateObj.getDeliveryId());
 //            }
 
-            // 外卖不进自动收货队列，避免到点被推进到已完成。
-            if (!takeout) {
-                try {
-                    RBlockingDeque<Object> blockingDeque = redissonClient.getBlockingDeque(ShopConstants.REDIS_ORDER_OUTTIME_UNCONFIRM);
-                    RDelayedQueue<Object> delayedQueue = redissonClient.getDelayedQueue(blockingDeque);
-                    delayedQueue.offer(OrderMsg.builder().orderId(updateObj.getOrderId()).build(), ShopConstants.ORDER_OUTTIME_UNCONFIRM, TimeUnit.MINUTES);
-                    String s = TimeUnit.SECONDS.toSeconds(ShopConstants.ORDER_OUTTIME_UNCONFIRM) + "分钟";
-                    log.info("添加延时队列成功 ，延迟时间：" + s);
-                } catch (Exception e) {
-                    log.error(e.getMessage());
-                }
+            // 堂食和自取仍可进自动收货队列。外卖不进，避免到点被推进到已完成。
+            try {
+                RBlockingDeque<Object> blockingDeque = redissonClient.getBlockingDeque(ShopConstants.REDIS_ORDER_OUTTIME_UNCONFIRM);
+                RDelayedQueue<Object> delayedQueue = redissonClient.getDelayedQueue(blockingDeque);
+                delayedQueue.offer(OrderMsg.builder().orderId(updateObj.getOrderId()).build(), ShopConstants.ORDER_OUTTIME_UNCONFIRM, TimeUnit.MINUTES);
+                String s = TimeUnit.SECONDS.toSeconds(ShopConstants.ORDER_OUTTIME_UNCONFIRM) + "分钟";
+                log.info("添加延时队列成功 ，延迟时间：" + s);
+            } catch (Exception e) {
+                log.error(e.getMessage());
             }
 
         }
@@ -231,7 +230,8 @@ public class StoreOrderServiceImpl implements StoreOrderService {
     private StoreOrderRespVO deliveryView(StoreOrderDO order) {
         StoreOrderRespVO view = StoreOrderConvert.INSTANCE.convert(order);
         int deleted = view.getIsSystemDel() == null ? 0 : view.getIsSystemDel();
-        view.setStatusStr(handleOrderStatus(view.getPaid(), view.getStatus(), view.getRefundStatus(), deleted));
+        view.setStatusStr(handleOrderStatus(view.getPaid(), view.getStatus(), view.getRefundStatus(), deleted,
+                view.getOrderType()));
         return view;
     }
 
@@ -312,7 +312,8 @@ public class StoreOrderServiceImpl implements StoreOrderService {
         storeOrderRespVO.setStoreOrderCartInfoDOList(storeOrderCartInfoDOList);
 
         storeOrderRespVO.setStatusStr(this.handleOrderStatus(storeOrderRespVO.getPaid()
-                ,storeOrderRespVO.getStatus(),storeOrderRespVO.getRefundStatus(),storeOrderRespVO.getIsSystemDel()));
+                ,storeOrderRespVO.getStatus(),storeOrderRespVO.getRefundStatus(),storeOrderRespVO.getIsSystemDel(),
+                storeOrderRespVO.getOrderType()));
         return storeOrderRespVO;
     }
 
@@ -352,7 +353,8 @@ public class StoreOrderServiceImpl implements StoreOrderService {
             storeOrderRespVO1.setStoreOrderCartInfoDOList(storeOrderCartInfoDOList);
             storeOrderRespVO1.setUserRespVO(userRespVO);
             storeOrderRespVO1.setStatusStr(this.handleOrderStatus(storeOrderRespVO1.getPaid()
-                    ,storeOrderRespVO1.getStatus(),storeOrderRespVO1.getRefundStatus(),storeOrderRespVO1.getIsSystemDel()));
+                    ,storeOrderRespVO1.getStatus(),storeOrderRespVO1.getRefundStatus(),storeOrderRespVO1.getIsSystemDel(),
+                    storeOrderRespVO1.getOrderType()));
         }
         return storeOrderRespVO;
     }
@@ -490,7 +492,7 @@ public class StoreOrderServiceImpl implements StoreOrderService {
      * @param del
      * @return
      */
-    private String handleOrderStatus(Integer payStatus,Integer status,Integer refundStatus,Integer del) {
+    private String handleOrderStatus(Integer payStatus,Integer status,Integer refundStatus,Integer del,String orderType) {
         String statusName = "";
         if (del == 1){
             statusName = "已删除";
@@ -501,7 +503,8 @@ public class StoreOrderServiceImpl implements StoreOrderService {
         }  else if (payStatus == 1 && status == 1 && refundStatus == 0) {
             statusName = "待收货";
         }  else if (payStatus == 1 && status == 2 && refundStatus == 0) {
-            statusName = "待评价";
+            // 只改外卖后台文案。堂食、自取仍是待评价。顾客端标题不走这里。
+            statusName = OrderLogEnum.ORDER_TAKE_OUT.getValue().equals(orderType) ? "已收货" : "待评价";
         } else if (payStatus == 1 && status == 3 && refundStatus == 0) {
             statusName = "已完成";
         } else if (payStatus == 1 && refundStatus == 2) {

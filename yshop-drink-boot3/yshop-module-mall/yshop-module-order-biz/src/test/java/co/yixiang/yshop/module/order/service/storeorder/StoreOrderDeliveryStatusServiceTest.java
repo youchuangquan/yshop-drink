@@ -1,18 +1,22 @@
 package co.yixiang.yshop.module.order.service.storeorder;
 
 import co.yixiang.yshop.framework.common.constant.ShopConstants;
+import co.yixiang.yshop.framework.common.pojo.PageResult;
 import co.yixiang.yshop.framework.common.enums.OrderInfoEnum;
 import co.yixiang.yshop.framework.common.exception.ServiceException;
 import co.yixiang.yshop.framework.common.order.PayChannels;
 import co.yixiang.yshop.framework.common.order.PaymentReconciliation;
 import co.yixiang.yshop.framework.security.core.LoginUser;
 import co.yixiang.yshop.module.member.service.user.MemberUserService;
+import co.yixiang.yshop.module.member.dal.mysql.user.MemberUserMapper;
 import co.yixiang.yshop.module.order.controller.admin.storeorder.vo.StoreOrderDeliveryStatusReqVO;
+import co.yixiang.yshop.module.order.controller.admin.storeorder.vo.StoreOrderPageReqVO;
 import co.yixiang.yshop.module.order.controller.admin.storeorder.vo.StoreOrderRespVO;
 import co.yixiang.yshop.module.order.controller.admin.storeorder.vo.StoreOrderUpdateReqVO;
 import co.yixiang.yshop.module.order.controller.app.order.vo.AppStoreOrderQueryVo;
 import co.yixiang.yshop.module.order.dal.dataobject.storeorder.StoreOrderDO;
 import co.yixiang.yshop.module.order.dal.dataobject.storeorderstatus.StoreOrderStatusDO;
+import co.yixiang.yshop.module.order.dal.mysql.storeordercartinfo.StoreOrderCartInfoMapper;
 import co.yixiang.yshop.module.order.dal.mysql.storeorder.StoreOrderMapper;
 import co.yixiang.yshop.module.order.dal.mysql.storeorderstatus.StoreOrderStatusMapper;
 import co.yixiang.yshop.module.order.enums.OrderLogEnum;
@@ -175,7 +179,7 @@ class StoreOrderDeliveryStatusServiceTest {
         service.updateDeliveryStatus(req(1, null, null));
         service.updateDeliveryStatus(req(2, null, null));
         StoreOrderRespVO again = service.updateDeliveryStatus(req(2, null, null));
-        assertDeliveryBody(again, 2, "待评价");
+        assertDeliveryBody(again, 2, "已收货");
         assertEquals(2, order.getStatus());
         assertEquals(2, deliveryRecords().size());
         assertNull(TakeoutDeliveryStatus.keyOf(deliveryRecords().get(0).getChangeMessage()));
@@ -304,6 +308,8 @@ class StoreOrderDeliveryStatusServiceTest {
         service.updateStoreOrder(send);
         assertEquals(0, order.getStatus());
         verify(redissonClient, never()).getBlockingDeque(anyString());
+        verify(storeOrderStatusService, never()).create(any(), any(), any(),
+                org.mockito.ArgumentMatchers.<String>argThat(message -> message != null && message.contains("已发货")));
         verify(appStoreOrderService, never()).takeOrder(any(), any(), any());
         verify(storeOrderMapper).updateById(org.mockito.ArgumentMatchers.argThat(
                 patch -> Integer.valueOf(0).equals(patch.getStatus())));
@@ -334,7 +340,57 @@ class StoreOrderDeliveryStatusServiceTest {
         order.setStatus(captor.getValue().getStatus());
         assertEquals(Integer.valueOf(2), order.getStatus());
         assertEquals(OrderInfoEnum.PAY_STATUS_1.getValue(), order.getPaid());
+        verify(storeOrderStatusService, never()).create(any(), any(), any(), any());
         assertMoneyAndAddress();
+    }
+
+    @Test
+    void adminGetAndPageSayReceivedOnlyForPaidUnrefundedTakeout() throws Exception {
+        inject("memberUserMapper", mock(MemberUserMapper.class));
+        StoreOrderCartInfoMapper carts = mock(StoreOrderCartInfoMapper.class);
+        inject("storeOrderCartInfoMapper", carts);
+        when(carts.selectList(any())).thenReturn(List.of());
+        order.setIsSystemDel(0);
+        order.setStatus(OrderInfoEnum.STATUS_2.getValue());
+
+        assertEquals("已收货", service.getStoreOrder(10L).getStatusStr());
+
+        order.setOrderType(OrderLogEnum.ORDER_TAKE_DESK.getValue());
+        assertEquals("待评价", service.getStoreOrder(10L).getStatusStr());
+        order.setOrderType(OrderLogEnum.ORDER_TAKE_IN.getValue());
+        assertEquals("待评价", service.getStoreOrder(10L).getStatusStr());
+
+        order.setOrderType(OrderLogEnum.ORDER_TAKE_OUT.getValue());
+        order.setRefundStatus(OrderInfoEnum.REFUND_STATUS_1.getValue());
+        assertEquals("退款中", service.getStoreOrder(10L).getStatusStr());
+        order.setRefundStatus(OrderInfoEnum.REFUND_STATUS_2.getValue());
+        assertEquals("已退款", service.getStoreOrder(10L).getStatusStr());
+        order.setRefundStatus(OrderInfoEnum.REFUND_STATUS_0.getValue());
+        order.setPaid(OrderInfoEnum.PAY_STATUS_0.getValue());
+        order.setStatus(OrderInfoEnum.STATUS_0.getValue());
+        assertEquals("未支付", service.getStoreOrder(10L).getStatusStr());
+
+        order.setPaid(OrderInfoEnum.PAY_STATUS_1.getValue());
+        order.setStatus(OrderInfoEnum.STATUS_2.getValue());
+        order.setOrderType(OrderLogEnum.ORDER_TAKE_OUT.getValue());
+        StoreOrderDO desk = takeout();
+        desk.setId(11L);
+        desk.setStatus(OrderInfoEnum.STATUS_2.getValue());
+        desk.setIsSystemDel(0);
+        desk.setOrderType(OrderLogEnum.ORDER_TAKE_DESK.getValue());
+        StoreOrderDO pickup = takeout();
+        pickup.setId(12L);
+        pickup.setStatus(OrderInfoEnum.STATUS_2.getValue());
+        pickup.setIsSystemDel(0);
+        pickup.setOrderType(OrderLogEnum.ORDER_TAKE_IN.getValue());
+        when(storeOrderMapper.selectPage(any())).thenReturn(new PageResult<>(List.of(order, desk, pickup), 3L));
+
+        PageResult<StoreOrderRespVO> page = service.getStoreOrderPage(new StoreOrderPageReqVO());
+        assertEquals(3, page.getList().size());
+        assertEquals("已收货", page.getList().get(0).getStatusStr());
+        assertEquals("待评价", page.getList().get(1).getStatusStr());
+        assertEquals("待评价", page.getList().get(2).getStatusStr());
+        assertEquals(OrderInfoEnum.PAY_STATUS_1.getValue(), page.getList().get(0).getPaid());
     }
 
     @Test
@@ -352,6 +408,9 @@ class StoreOrderDeliveryStatusServiceTest {
         desk.setUpdateType(UpdateOrderEnum.ORDER_SEND.getValue());
         service.updateStoreOrder(desk);
         verify(delayed).offer(any(), eq((long) ShopConstants.ORDER_OUTTIME_UNCONFIRM), eq(TimeUnit.MINUTES));
+        verify(storeOrderStatusService).create(any(), eq(10L),
+                eq(OrderLogEnum.DELIVERY_GOODS.getValue()),
+                org.mockito.ArgumentMatchers.<String>argThat(message -> message != null && message.startsWith("已发货")));
 
         TakeProbe probe = new TakeProbe();
         AppStoreOrderQueryVo takeout = new AppStoreOrderQueryVo();
