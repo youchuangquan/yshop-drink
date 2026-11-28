@@ -19,6 +19,10 @@ public class HotpotBoundBillResp {
 
     private String status;
 
+    private Boolean paid;
+
+    private Boolean zeroPayReleased;
+
     private Boolean feesWaived;
 
     private List<PotLine> pots;

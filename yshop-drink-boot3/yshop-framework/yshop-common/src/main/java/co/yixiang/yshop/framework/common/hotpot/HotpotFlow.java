@@ -268,12 +268,15 @@ public final class HotpotFlow {
     /**
      * 绑定顾客自己的账单。应付、明细、状态和版本都来自这一次开台，不在这里另编。
      * 没有顾客号，也没有让调用方填写的实付金额。
+     * paid 只反映这一台是否已付。应付为 0 的释放不是已付。
      */
     public static final class BoundBill {
         private final long sessionId;
         private final int version;
         private final int payableFen;
         private final String status;
+        private final boolean paid;
+        private final boolean zeroPayReleased;
         private final boolean feesWaived;
         private final List<SessionPot> pots;
         private final List<SessionDish> dishes;
@@ -283,6 +286,8 @@ public final class HotpotFlow {
             this.version = session.version;
             this.payableFen = session.payableFen;
             this.status = session.status.name();
+            this.paid = session.paid;
+            this.zeroPayReleased = session.zeroPayReleased;
             this.feesWaived = session.feesWaived;
             this.pots = List.copyOf(session.pots);
             this.dishes = List.copyOf(session.dishes);
@@ -302,6 +307,14 @@ public final class HotpotFlow {
 
         public String status() {
             return status;
+        }
+
+        public boolean paid() {
+            return paid;
+        }
+
+        public boolean zeroPayReleased() {
+            return zeroPayReleased;
         }
 
         public boolean feesWaived() {
@@ -874,7 +887,10 @@ public final class HotpotFlow {
     }
 
     /**
-     * 绑定顾客查看自己的开台账单。对不上就失败，响应里不带身份。
+     * 顾客按桌码看自己的账单。桌台当前钉着的进行中台次若属于本人，就返回这一次。
+     * 否则返回这张桌、这家店、这个顾客最近的一次进行中或已释放台次。最近按台次 id，不另加列。
+     * 别人正在用这张桌时，不进入别人的台次。对不上就失败，响应里不带身份。
+     * 扫码和开桌仍只认桌台当前绑定，不从这里找回已释放的台次。
      */
     public static BoundBill boundBill(Board board, long shopId, String signCode, long callerUid) {
         shopId = ShopAccess.requirePositiveShopId(shopId);
@@ -885,12 +901,34 @@ public final class HotpotFlow {
             throw exception(BAD_REQUEST);
         }
         Table table = findTable(board, shopId, signCode.trim());
-        Session session = table == null || table.sessionId == null ? null : board.sessions.get(table.sessionId);
-        if (table == null || table.boundUid == null || table.boundUid != callerUid || session == null
-                || session.shopId != shopId || session.status != SessionStatus.OPEN || session.ownerUid != callerUid) {
+        if (table == null) {
             throw exception(NOT_FOUND);
         }
-        return new BoundBill(session);
+        Session pinned = table.sessionId == null ? null : board.sessions.get(table.sessionId);
+        if (belongsOnTable(pinned, shopId, table.id, callerUid) && pinned.status == SessionStatus.OPEN) {
+            return new BoundBill(pinned);
+        }
+        Session latest = null;
+        for (Session session : board.sessions.values()) {
+            if (!belongsOnTable(session, shopId, table.id, callerUid)) {
+                continue;
+            }
+            if (session.status != SessionStatus.OPEN && session.status != SessionStatus.RELEASED) {
+                continue;
+            }
+            if (latest == null || session.id > latest.id) {
+                latest = session;
+            }
+        }
+        if (latest == null) {
+            throw exception(NOT_FOUND);
+        }
+        return new BoundBill(latest);
+    }
+
+    private static boolean belongsOnTable(Session session, long shopId, long tableId, long callerUid) {
+        return session != null && session.shopId == shopId && session.tableId != null && session.tableId == tableId
+                && session.ownerUid == callerUid;
     }
 
     /**

@@ -618,6 +618,108 @@ class HotpotFlowTest {
     }
 
     @Test
+    void aReleasedZeroBillStaysReadableByTheOriginalCustomer() {
+        HotpotFlow.Board board = board();
+        HotpotFlow.Slot slot = slot(board, SHOP, 2, "b4-slot-1");
+        HotpotFlow.Table table = table(board, SHOP, "B4", "b4-table");
+        menu(board, SHOP, BEEF, "鲜牛肉", 1800);
+        menu(board, SHOP, TOFU, "豆腐", 600);
+        HotpotFlow.Session first = HotpotFlow.orderDish(board, SHOP, slot.id, "B4", GUEST, BEEF, 1, null, "b4-dish-1");
+        HotpotFlow.Pot pot = HotpotFlow.addPotConfig(board, SHOP, "红锅", POT_FEN, STAFF, "b4-pot-cfg");
+        HotpotFlow.addPot(board, SHOP, first.id, pot.id, first.version, GUEST, false, "b4-pot-add");
+        HotpotFlow.SessionDish firstLine = first.dishes.get(0);
+
+        HotpotFlow.Settlement cleared = HotpotFlow.refund(board, SHOP, first.id, first.version, true, "b4-refund-1",
+                List.of(new HotpotFlow.LineQty(firstLine.id, 1)));
+        assertFalse(cleared.paymentSuccess);
+        assertTrue(cleared.zeroPayReleased);
+        assertEquals(HotpotFlow.DISPOSITION_ZERO_PAY, cleared.disposition);
+        assertFalse(first.paid);
+        assertEquals(HotpotFlow.SessionStatus.RELEASED, first.status);
+        assertEquals("B4", table.signCode);
+        assertNull(table.boundUid);
+        assertNull(table.sessionId);
+        assertFalse(table.occupied);
+        assertEquals(0, HotpotFlow.openSessions(board, SHOP).size());
+        HotpotFlow.PublicScan idle = HotpotFlow.scan(board, SHOP, "B4");
+        assertEquals("B4", idle.signCode());
+        assertFalse(idle.occupied());
+
+        HotpotFlow.BoundBill ended = HotpotFlow.boundBill(board, SHOP, "B4", GUEST);
+        assertEquals(first.id, ended.sessionId());
+        assertEquals("RELEASED", ended.status());
+        assertEquals(0, ended.payableFen());
+        assertTrue(ended.feesWaived());
+        assertFalse(ended.paid());
+        assertTrue(ended.zeroPayReleased());
+        assertEquals(1, ended.pots().size());
+        assertEquals(POT_FEN, ended.pots().get(0).priceFen);
+        assertEquals(pot.id, ended.pots().get(0).potId);
+        assertEquals(1, ended.dishes().size());
+        assertEquals(firstLine.id, ended.dishes().get(0).id);
+
+        HotpotFlow.Session second = HotpotFlow.orderDish(board, SHOP, slot.id, "B4", GUEST, BEEF, 1, null, "b4-dish-2");
+        assertFalse(first.id == second.id);
+        HotpotFlow.SessionDish secondLine = second.dishes.get(0);
+        HotpotFlow.refund(board, SHOP, second.id, second.version, true, "b4-refund-2",
+                List.of(new HotpotFlow.LineQty(secondLine.id, 1)));
+        HotpotFlow.BoundBill later = HotpotFlow.boundBill(board, SHOP, "B4", GUEST);
+        assertEquals(second.id, later.sessionId());
+        assertTrue(later.feesWaived());
+        assertEquals("RELEASED", later.status());
+        assertEquals(0, later.payableFen());
+        assertFalse(later.paid());
+        assertTrue(later.zeroPayReleased());
+        assertTrue(later.pots().isEmpty());
+
+        HotpotFlow.Session fresh = HotpotFlow.orderDish(board, SHOP, slot.id, "B4", OTHER_GUEST, TOFU, 1, null,
+                "b4-dish-3");
+        assertFalse(second.id == fresh.id);
+        assertEquals(OTHER_GUEST, fresh.ownerUid);
+        assertEquals(1, fresh.dishes.size());
+        assertEquals(TOFU, fresh.dishes.get(0).productId);
+        assertTrue(fresh.pots.isEmpty());
+        assertEquals(firstLine.id, first.dishes.get(0).id);
+        assertFalse(fresh.dishes.get(0).id == firstLine.id);
+        assertEquals(1, first.dishes.get(0).refundedQty);
+        assertTrue(table.occupied);
+        assertEquals(fresh.id, table.sessionId);
+        assertEquals("B4", table.signCode);
+        HotpotFlow.PublicScan taken = HotpotFlow.scan(board, SHOP, "B4");
+        assertTrue(taken.occupied());
+        assertEquals("B4", taken.signCode());
+        List<HotpotFlow.Session> open = HotpotFlow.openSessions(board, SHOP);
+        assertEquals(1, open.size());
+        assertEquals(fresh.id, open.get(0).id);
+
+        HotpotFlow.BoundBill stillMine = HotpotFlow.boundBill(board, SHOP, "B4", GUEST);
+        assertEquals(second.id, stillMine.sessionId());
+        assertEquals("RELEASED", stillMine.status());
+        assertTrue(stillMine.feesWaived());
+        assertFalse(stillMine.paid());
+        assertTrue(stillMine.zeroPayReleased());
+        assertEquals(0, stillMine.payableFen());
+        HotpotFlow.BoundBill theirs = HotpotFlow.boundBill(board, SHOP, "B4", OTHER_GUEST);
+        assertEquals(fresh.id, theirs.sessionId());
+        assertEquals("OPEN", theirs.status());
+        assertFalse(theirs.feesWaived());
+        assertFalse(theirs.paid());
+        assertFalse(theirs.zeroPayReleased());
+        assertEquals(600, theirs.payableFen());
+        assertTrue(theirs.pots().isEmpty());
+
+        long stranger = 77L;
+        ServiceException otherPerson = assertThrows(ServiceException.class,
+                () -> HotpotFlow.boundBill(board, SHOP, "B4", stranger));
+        assertEquals(NOT_FOUND.getCode(), otherPerson.getCode());
+        assertFalse(otherPerson.getMessage().contains(Long.toString(GUEST)));
+        assertFalse(otherPerson.getMessage().contains(Long.toString(OTHER_GUEST)));
+        ServiceException otherShop = assertThrows(ServiceException.class,
+                () -> HotpotFlow.boundBill(board, OTHER_SHOP, "B4", GUEST));
+        assertEquals(NOT_FOUND.getCode(), otherShop.getCode());
+    }
+
+    @Test
     void aServedLineBlocksEmptyingTheTable() {
         HotpotFlow.Board board = board();
         HotpotFlow.Slot slot = slot(board, SHOP, 2, "srv-slot-block");

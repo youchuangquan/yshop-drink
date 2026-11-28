@@ -154,6 +154,8 @@ public class HotpotServiceImpl implements HotpotService {
         resp.setVersion(bill.version());
         resp.setPayableFen(bill.payableFen());
         resp.setStatus(bill.status());
+        resp.setPaid(bill.paid());
+        resp.setZeroPayReleased(bill.zeroPayReleased());
         resp.setFeesWaived(bill.feesWaived());
         List<HotpotBoundBillResp.PotLine> pots = new ArrayList<>();
         for (HotpotFlow.SessionPot pot : bill.pots()) {
